@@ -1,0 +1,243 @@
+// ── Config ───────────────────────────────────────────────────────────────
+// Forked from ../Leaflet App/AppsScript.txt — getVerifiedEmail/isAuthorised/
+// jsonResp below are copied near-verbatim from that file (same Google
+// tokeninfo verification, same Authorised-sheet lookup, same DEMO_MODE
+// escape hatch). What's new here is submitReport's Drive photo upload —
+// the leafletting map's script is pure cell writes with no blob handling.
+//
+// Deliberately NOT ported from the leafletting map (see the plan this was
+// built from, "Not building for v1"): the Pending-proposal queue, Banned
+// list, and editor revert/history tools. Every write action here requires
+// full Authorised-sheet membership; there's no lesser "propose" tier yet.
+
+const AUTHORISED_SHEET = "Authorised";
+const REPORTS_SHEET  = "Reports";
+const CLUSTERS_SHEET = "Clusters";
+
+// Lazily created (see getPhotosFolderId() below) rather than requiring a
+// manual "create a Drive folder, paste its ID into Script Properties" step
+// per deployment — same reasoning as the GOOGLE_CLIENT_ID fallback above.
+function getPhotosFolderId() {
+  const props = PropertiesService.getScriptProperties();
+  let id = props.getProperty("PHOTOS_FOLDER_ID");
+  if (id) return id;
+  const folder = DriveApp.createFolder(
+    SpreadsheetApp.getActiveSpreadsheet().getName() + " — Pothole Photos"
+  );
+  id = folder.getId();
+  props.setProperty("PHOTOS_FOLDER_ID", id);
+  return id;
+}
+
+// Set once per deployment, same as the leafletting map's script: Project
+// Settings -> Script Properties -> GOOGLE_CLIENT_ID = this deployment's
+// index.html window.POTHOLE_CONFIG.GOOGLE_CLIENT_ID. Falls back to the same
+// shared client ID the leafletting map deployments reuse (see that file's
+// AppsScript.txt) so a freshly automated deployment works without a manual
+// property paste.
+const GOOGLE_CLIENT_ID = PropertiesService.getScriptProperties().getProperty("GOOGLE_CLIENT_ID")
+  || "580224381168-i67a13m72bvlpq8rtkhnjk15tic4k9e1.apps.googleusercontent.com";
+
+// See the same flag in the leafletting map's script for what it does —
+// every signed-in Google account counts as authorised. Demo deployments only.
+const DEMO_MODE = PropertiesService.getScriptProperties().getProperty("DEMO_MODE") === "true";
+
+// Reports sheet columns (1-indexed)
+const R_ID = 1, R_TIMESTAMP = 2, R_LAT = 3, R_LON = 4, R_ACCURACY = 5,
+      R_DESCRIPTION = 6, R_SEVERITY = 7, R_PHOTO_URL = 8, R_STATUS = 9,
+      R_CLUSTER_ID = 10, R_ROAD_NAME = 11, R_WARD = 12, R_PLANNED_DATE = 13;
+
+// Clusters sheet columns (1-indexed)
+const C_CLUSTER_ID = 1, C_ROAD_NAME = 2, C_WARD = 3, C_CENTROID_LAT = 4,
+      C_CENTROID_LON = 5, C_REPORT_COUNT = 6, C_PRIORITY_SCORE = 7,
+      C_PRIORITY_RANK = 8, C_STATUS = 9, C_PLANNED_DATE = 10, C_NOTES = 11;
+
+const ALLOWED_REPORT_STATUSES  = ["Reported", "Under_Review", "Planned", "Scheduled", "Fixed"];
+const ALLOWED_CLUSTER_STATUSES = ["Under_Review", "Planned", "Scheduled", "Fixed"];
+const ALLOWED_SEVERITIES = ["Minor", "Moderate", "Severe", "Hazardous"];
+
+// ── POST handler ─────────────────────────────────────────────────────────
+function doPost(e) {
+  try {
+    const body = JSON.parse(e.postData.contents);
+    if (body.action === "submitReport")       return handleSubmitReport(body);
+    if (body.action === "verify")              return handleVerify(body);
+    if (body.action === "updateReportStatus")  return handleUpdateReportStatus(body);
+    if (body.action === "updateCluster")       return handleUpdateCluster(body);
+    if (body.action === "sheetInfo")           return handleSheetInfo(body);
+    return jsonResp({ ok: false, error: "Unknown action" });
+  } catch (err) {
+    return jsonResp({ ok: false, error: err.message });
+  }
+}
+
+// ── Submit a report (public — no sign-in required) ─────────────────────────
+function handleSubmitReport(body) {
+  const lat = parseFloat(body.lat), lon = parseFloat(body.lon);
+  if (isNaN(lat) || isNaN(lon)) return jsonResp({ ok: false, error: "Missing or invalid location." });
+
+  const severity = ALLOWED_SEVERITIES.includes(body.severity) ? body.severity : "Unknown";
+  const description = String(body.description || "").slice(0, 2000); // guard against pathological payloads
+  const accuracy = parseFloat(body.accuracy) || "";
+
+  let photoUrl = "";
+  if (body.photoBase64) {
+    const mimeType = body.photoMimeType || "image/jpeg";
+    const bytes = Utilities.base64Decode(body.photoBase64);
+    const blob = Utilities.newBlob(bytes, mimeType, "pothole-" + new Date().getTime() + ".jpg");
+    const folder = DriveApp.getFolderById(getPhotosFolderId());
+    const file = folder.createFile(blob);
+    file.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
+    // A direct-view URL (not the "open in Drive" webViewLink) so it can be
+    // dropped straight into an <img src> on the public map.
+    photoUrl = "https://drive.google.com/uc?export=view&id=" + file.getId();
+  }
+
+  const sheet = getReportsSheet();
+  const id = Utilities.getUuid();
+  sheet.appendRow([
+    id, new Date().toISOString(), lat, lon, accuracy,
+    description, severity, photoUrl, "Reported",
+    "", "", "", "" // cluster_id / road_name / ward / planned_date — filled in later by cluster_potholes.py or an admin
+  ]);
+
+  return jsonResp({ ok: true, id, photoUrl });
+}
+
+// ── Verify (reused pattern — admin sign-in only, reporting never needs it) ─
+function handleVerify(body) {
+  const email = getVerifiedEmail(body);
+  if (!email) return jsonResp({ ok: false, error: "Invalid or expired token" });
+  return jsonResp({ ok: true, authorised: isAuthorised(email), banned: false, email });
+}
+
+// ── Admin: set a report's status/planned date ──────────────────────────────
+function handleUpdateReportStatus(body) {
+  const email = getVerifiedEmail(body);
+  if (!email) return jsonResp({ ok: false, error: "Invalid or expired token" });
+  if (!isAuthorised(email)) return jsonResp({ ok: false, error: "Not authorised" });
+
+  const row = parseInt(body.rowIndex, 10);
+  if (isNaN(row) || row < 2) return jsonResp({ ok: false, error: "Invalid row index" });
+
+  const sheet = getReportsSheet();
+  if (row > sheet.getLastRow()) return jsonResp({ ok: false, error: "Row out of range" });
+
+  if (body.status !== undefined) {
+    if (!ALLOWED_REPORT_STATUSES.includes(body.status)) return jsonResp({ ok: false, error: "Invalid status: " + body.status });
+    sheet.getRange(row, R_STATUS).setValue(body.status);
+  }
+  if (body.plannedDate !== undefined) {
+    sheet.getRange(row, R_PLANNED_DATE).setValue(String(body.plannedDate || ""));
+  }
+
+  return jsonResp({ ok: true });
+}
+
+// ── Admin: set a cluster's status/planned date ─────────────────────────────
+function handleUpdateCluster(body) {
+  const email = getVerifiedEmail(body);
+  if (!email) return jsonResp({ ok: false, error: "Invalid or expired token" });
+  if (!isAuthorised(email)) return jsonResp({ ok: false, error: "Not authorised" });
+
+  const row = parseInt(body.rowIndex, 10);
+  if (isNaN(row) || row < 2) return jsonResp({ ok: false, error: "Invalid row index" });
+
+  const sheet = getClustersSheet();
+  if (row > sheet.getLastRow()) return jsonResp({ ok: false, error: "Row out of range" });
+
+  if (body.status !== undefined) {
+    if (!ALLOWED_CLUSTER_STATUSES.includes(body.status)) return jsonResp({ ok: false, error: "Invalid status: " + body.status });
+    sheet.getRange(row, C_STATUS).setValue(body.status);
+  }
+  if (body.plannedDate !== undefined) {
+    sheet.getRange(row, C_PLANNED_DATE).setValue(String(body.plannedDate || ""));
+  }
+
+  return jsonResp({ ok: true });
+}
+
+// ── Deployment helper: report the sheet gids index.html's config needs ────
+// (No auth — returns structural metadata only, never report content.) Lets
+// the deployment tooling read Reports/Clusters gids straight off the live
+// script right after first deploy, instead of opening the Sheet by hand.
+function handleSheetInfo(body) {
+  const reportsGid = getReportsSheet().getSheetId();
+  const clustersGid = getClustersSheet().getSheetId();
+  return jsonResp({ ok: true, spreadsheetId: SpreadsheetApp.getActiveSpreadsheet().getId(), reportsGid, clustersGid });
+}
+
+// ── Sheet helpers ────────────────────────────────────────────────────────
+function getReportsSheet() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  let sheet = ss.getSheetByName(REPORTS_SHEET);
+  if (!sheet) {
+    sheet = ss.insertSheet(REPORTS_SHEET);
+    sheet.appendRow(["id", "timestamp", "lat", "lon", "accuracy", "description", "severity", "photo_url", "status", "cluster_id", "road_name", "ward", "planned_date"]);
+  }
+  return sheet;
+}
+function getClustersSheet() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  let sheet = ss.getSheetByName(CLUSTERS_SHEET);
+  if (!sheet) {
+    sheet = ss.insertSheet(CLUSTERS_SHEET);
+    sheet.appendRow(["cluster_id", "road_name", "ward", "centroid_lat", "centroid_lon", "report_count", "priority_score", "priority_rank", "status", "planned_date", "notes"]);
+  }
+  return sheet;
+}
+
+// ── Auth helpers (copied near-verbatim from ../Leaflet App/AppsScript.txt —
+// see that file for the reasoning behind the aud checks) ──────────────────
+function getVerifiedEmail(body) {
+  if (!GOOGLE_CLIENT_ID) {
+    throw new Error("Server misconfigured: set the GOOGLE_CLIENT_ID script property (Project Settings -> Script Properties) to this deployment's index.html GOOGLE_CLIENT_ID.");
+  }
+  try {
+    if (body.idToken) {
+      const res = UrlFetchApp.fetch(
+        "https://oauth2.googleapis.com/tokeninfo?id_token=" + body.idToken,
+        { muteHttpExceptions: true }
+      );
+      if (res.getResponseCode() !== 200) return null;
+      const info = JSON.parse(res.getContentText());
+      if (info.error || !info.email_verified) return null;
+      if (info.aud !== GOOGLE_CLIENT_ID) return null;
+      return info.email.toLowerCase();
+    }
+    if (body.accessToken) {
+      const tiRes = UrlFetchApp.fetch(
+        "https://oauth2.googleapis.com/tokeninfo?access_token=" + body.accessToken,
+        { muteHttpExceptions: true }
+      );
+      if (tiRes.getResponseCode() !== 200) return null;
+      const tiInfo = JSON.parse(tiRes.getContentText());
+      if (tiInfo.error || tiInfo.aud !== GOOGLE_CLIENT_ID) return null;
+
+      const res = UrlFetchApp.fetch(
+        "https://www.googleapis.com/oauth2/v3/userinfo",
+        { headers: { Authorization: "Bearer " + body.accessToken }, muteHttpExceptions: true }
+      );
+      if (res.getResponseCode() !== 200) return null;
+      const info = JSON.parse(res.getContentText());
+      return info.email ? info.email.toLowerCase() : null;
+    }
+    return null;
+  } catch (e) { return null; }
+}
+
+function isAuthorised(email) {
+  if (DEMO_MODE) return true;
+  const sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(AUTHORISED_SHEET);
+  if (!sheet) return false;
+  return sheet.getDataRange().getValues()
+    .flat()
+    .some(v => String(v).trim().toLowerCase() === email);
+}
+
+// ── Response helper ─────────────────────────────────────────────────────
+function jsonResp(obj) {
+  return ContentService
+    .createTextOutput(JSON.stringify(obj))
+    .setMimeType(ContentService.MimeType.JSON);
+}
