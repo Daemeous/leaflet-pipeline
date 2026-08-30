@@ -86,3 +86,26 @@ clasp deploy --deploymentId <the same id> --description "..."
 Both Apps Script templates default `GOOGLE_CLIENT_ID` to the existing shared OAuth client and (Pothole Watch only) lazily create their own Drive photos folder, specifically so a fresh deployment works without a Script Properties paste — see the comments at the top of each `.gs.txt` file.
 
 Reading a deployment's sheet gids without opening the Sheets UI: `pothole-watch.gs.txt` exposes a `sheetInfo` POST action that returns `{spreadsheetId, reportsGid, clustersGid}` — useful for scripting the `index.html` fill-in step right after first deploy.
+
+---
+
+## License
+
+This project's own code (the pipeline scripts and Apps Script templates) is licensed under the **[PolyForm Noncommercial License 1.0.0](LICENSE)**: free to use, share, and modify for any non-commercial purpose, with attribution. See [`LICENSE`](LICENSE) for the full text.
+
+That covers this code only. The geographic data it processes comes from sources under their own separate licenses that explicitly permit commercial use (see Attributions below) — this project's non-commercial restriction doesn't, and legally can't, extend to that underlying data.
+
+## Attributions
+
+| Dependency | License | Notes |
+|---|---|---|
+| [OpenStreetMap](https://www.openstreetmap.org/copyright) | [ODbL](https://opendatacommons.org/licenses/odbl/) | Road data, fetched via the Overpass API. Permits commercial use; requires attribution and share-alike for derivative databases. |
+| OS Boundary-Line & OS Open UPRN | [Open Government Licence v3.0](https://www.nationalarchives.gov.uk/doc/open-government-licence/version/3/) | © Crown copyright and database right, Ordnance Survey. Permits commercial use; requires attribution. Not redistributed in this repo — see "Not included" above. |
+| [Overpass API](https://overpass-api.de) | [Usage policy](https://dev.overpass-api.de/overpass-doc/en/preface/commons.html) | OSM data queries |
+| [GeoPandas](https://geopandas.org) / [Shapely](https://shapely.readthedocs.io) / [pyproj](https://pyproj4.github.io/pyproj/) | BSD-3-Clause | Geospatial processing |
+| [pandas](https://pandas.pydata.org) / [NumPy](https://numpy.org) | BSD-3-Clause | Data handling |
+| [openpyxl](https://openpyxl.readthedocs.io) | MIT | Excel/Sheets-ready workbook output |
+| [Requests](https://requests.readthedocs.io) | Apache-2.0 | HTTP calls (Overpass, Boundary-Line lookups) |
+| [OSMnx](https://osmnx.readthedocs.io) | MIT | Referenced by earlier pipeline iterations |
+| [clasp](https://github.com/google/clasp) | Apache-2.0 | Google's CLI, used (not bundled) to create/push/deploy the Apps Script backends |
+| Google Sheets, Drive & Apps Script | [Google Terms of Service](https://policies.google.com/terms) | The hosted backend every deployment reads/writes |
