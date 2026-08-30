@@ -93,6 +93,8 @@ Reading a deployment's sheet gids without opening the Sheets UI: `pothole-watch.
 
 This project's own code (the pipeline scripts and Apps Script templates) is licensed under the **[PolyForm Noncommercial License 1.0.0](LICENSE)**: free to use, share, and modify for any non-commercial purpose, with attribution. See [`LICENSE`](LICENSE) for the full text.
 
+Copyright © Daniel Hodgkins.
+
 That covers this code only. The geographic data it processes comes from sources under their own separate licenses that explicitly permit commercial use (see Attributions below) — this project's non-commercial restriction doesn't, and legally can't, extend to that underlying data.
 
 ## Attributions
