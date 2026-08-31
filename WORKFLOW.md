@@ -25,6 +25,14 @@ Leaflets/
                         finalize_output.py         (only for refreshing an existing constituency)
   <ConstituencyName>/ one folder per finished/in-progress constituency
   _archive/           superseded scripts/outputs, kept for reference only
+  Leaflet App/         canvassing-map frontend source (index.html/core.js/
+                        styles.css/sw.js) — see "Publishing a deployment"
+                        below for how this becomes the live GitHub repos
+  Pothole App/          pothole-reporting frontend source, same pattern
+  leaflet-pipeline/     local working copy of the PUBLISHED github.com/
+                        Daemeous/leaflet-pipeline repo (template/, this
+                        file, and the Apps Script sources) — keep in sync,
+                        see "Keeping leaflet-pipeline in sync" below
   WORKFLOW.md         this file
 ```
 
@@ -230,6 +238,225 @@ missing roads fix" / "Pipeline fix rollout") rather than here, since
 that's a point-in-time status record, not a repeatable procedure. As of
 2026-08-27, Stafford, Stone, Barnsley, Burton_Uttoxeter, and St_Helens
 have all been refreshed with the fixed pipeline.
+
+## Publishing a deployment (GitHub repo + Google Sheet + Apps Script)
+
+Building the spreadsheet (steps 1–11 above) is only half of shipping a new
+area — this section covers the other half: turning that into a live,
+publicly-reachable site with its own Google Sheet backend and Apps Script
+API, and keeping every repo's "Live deployments" list in sync when you do.
+Skim this whole section before starting; several steps only work in a
+specific order.
+
+### Prerequisites (one-time per machine, not per deployment)
+
+- **GitHub CLI (`gh`)** and **`clasp`** (`npm install -g @google/clasp`)
+  installed. On this machine they're already set up — verify with
+  `gh auth status` and a harmless `clasp` command before assuming you need
+  to reinstall/relogin; both persist across sessions since they're tied to
+  this Windows user profile, not to any one Claude session.
+- `gh auth login --web` — one-time browser device-code flow. Must be signed
+  in as the account that owns the target GitHub org/user (**Daemeous** for
+  everything in this project).
+- `clasp login` — one-time browser OAuth flow. Must be signed in as the
+  Google account that owns the Sheets/Apps Script (**djshodgkins@gmail.com**).
+  That Google account also needs "Google Apps Script API" turned ON once, at
+  https://script.google.com/home/usersettings — `clasp` errors with a link
+  to that page if it isn't (allow a few minutes to propagate after enabling
+  it before retrying).
+- Neither login needs repeating per deployment — both cache a refresh token
+  (`gh`'s in its own credential store, `clasp`'s at `~/.clasprc.json`) that
+  keeps working until revoked. **Never print, cat, or otherwise dump either
+  credential file's contents** — if you need to script against them (e.g.
+  a one-off Node script using `clasp`'s cached token to call a Google API
+  clasp itself doesn't expose), read them into a variable programmatically
+  and use them without ever echoing the token.
+
+### Repo architecture — read before creating a new repo
+
+- **Leaflet Map family**: one GitHub repo per constituency (`leaflet-map`,
+  `south-hams`, `burton-uttoxeter`, `stone`, `barnsley`, `sthelens`, plus
+  `leaflet-map-demo`), all under `Daemeous`, each with GitHub Pages enabled
+  serving from `main`/`/`. **Only `leaflet-map` carries the real
+  `core.js`/`styles.css`** — every other repo's `index.html` loads them
+  cross-origin from `https://daemeous.github.io/leaflet-map/...?shared_v=N`
+  (see `leaflet-map`'s own README, "Shared assets", for the full reasoning
+  and the cache-busting convention below). A new constituency repo should
+  follow this thin pattern too, not carry its own copy.
+- **Pothole Watch**: same repo-per-area pattern (`stafford-potholes` so
+  far), but `core.js`/`styles.css`/`api.js` are **not** shared cross-origin
+  — each repo keeps its own copy (the report/photo data model differs
+  enough from the leafletting map that sharing wasn't worth it).
+- **`leaflet-pipeline`**: the canonical, published copy of this file,
+  `template/`, and the Apps Script source (`apps-script/*.gs.txt`) — the
+  site repos above contain no pipeline code at all. If you change
+  `template/` or this file locally, push the same change to
+  `leaflet-pipeline` too (see "Keeping leaflet-pipeline in sync" below).
+- Every deployment above already shares **one Google OAuth Client ID**
+  (`580224381168-i67a13m72bvlpq8rtkhnjk15tic4k9e1.apps.googleusercontent.com`)
+  for Google Identity sign-in — not a secret, it's meant to be embedded in
+  public client-side code, and already is in every deployment's
+  `index.html`. Both Apps Script templates fall back to it via
+  `PropertiesService`, so a fresh deployment needs neither a new OAuth
+  client nor a Script Properties paste. A new Cloud Console "authorized
+  JavaScript origin" entry is only needed for a genuinely new origin — every
+  deployment here lives on `daemeous.github.io` (same origin, different
+  path), so this has never actually come up yet.
+
+### Creating a new Sheet + Apps Script backend
+
+**Proven end-to-end** (used for `stafford-potholes`) — for an app that
+starts from a blank Sheet the Apps Script itself populates on first use:
+```bash
+mkdir my-deployment && cd my-deployment
+clasp create --type sheets --title "My Deployment Name"
+#   -> prints the new Spreadsheet's Drive URL and the script's editor URL;
+#      .clasp.json now has scriptId + parentId (the new Spreadsheet's file ID)
+```
+Set the manifest, then push:
+```jsonc
+// appsscript.json — add this block
+"webapp": { "executeAs": "USER_DEPLOYING", "access": "ANYONE_ANONYMOUS" }
+```
+Copy the relevant `apps-script/*.gs.txt` content in as `Code.gs`, then:
+```bash
+clasp push
+clasp deploy --description "initial"
+#   -> prints a deployment ID; the web app's exec URL is
+#      https://script.google.com/macros/s/<deploymentId>/exec
+```
+To update the SAME deployment later (same exec URL, no re-share needed):
+```bash
+clasp push
+clasp deploy --deploymentId <the same id> --description "..."
+```
+Verify it's actually reachable before moving on — a fresh anonymous web-app
+deployment has needed one interactive browser hit (accept an "Authorize"
+prompt, as the deploying account, on the exec URL) before it serves
+anonymous `curl`/`fetch` requests cleanly; a plain `curl -X POST`
+immediately after `clasp deploy` can 403 until that's been done once.
+
+**Not proven this way yet — Leaflet Map deployments**, which start from
+`build_tracker.py`'s already-populated `<prefix>_Tracker.xlsx`, not a blank
+Sheet: upload it to Drive and let Google convert it (Drive web UI: upload,
+then "Open with → Google Sheets", or the Drive settings' "convert uploads"
+option), note the resulting Sheet's file ID from its URL, then attach a
+bound Apps Script project to that EXISTING file instead of creating a new
+one:
+```bash
+clasp create --type sheets --parentId <existing Sheet's file ID> --title "My Deployment Name"
+```
+then push/deploy exactly as above. This should work per `clasp`'s own
+`--parentId` semantics but hasn't actually been exercised end-to-end in a
+session yet — verify it once and update this note (and remove this
+caveat) when it has.
+
+### The one step that can't be automated
+
+**"Publish to web"** (Sheet → File → Share → Publish to web → format CSV →
+Publish) is what produces the `docs.google.com/spreadsheets/d/e/<id>/pub?...`
+ID `index.html`'s `SHEET_ID` needs. The Drive API v2
+`revisions.update({published: true})` call can technically do this, but
+it's specifically the kind of action Claude Code's own safety classifier
+blocks outright (flipping a file to publicly readable) — no permission
+prompt gets you past it, so don't try to script around the block. Do this
+one by hand, every time, for every new Sheet. Everything else in this
+section is scriptable.
+
+Reading a fresh Pothole Watch deployment's sheet gids without opening the
+Sheets UI: send a `{"action":"sheetInfo"}` POST to the deployed exec URL —
+returns `{spreadsheetId, reportsGid, clustersGid}`.
+
+### Creating and publishing the GitHub repo
+
+```bash
+cd my-deployment-site   # just the static files: index.html, sw.js, (LICENSE, README.md)
+git init -q && git checkout -q -b main
+git config user.name "Daemeous" && git config user.email "daemeous@gmail.com"
+git add -A && git commit -q -m "Initial deployment"
+gh repo create Daemeous/<repo-name> --public --source=. --remote=origin --push
+gh api -X POST repos/Daemeous/<repo-name>/pages -f "source[branch]=main" -f "source[path]=/"
+```
+Pages usually takes 30–60s to build after the first push — a `curl`
+immediately after can 404 even though the push succeeded; retry a few
+times before concluding something's wrong.
+
+### Filling in `index.html`
+
+- `SHEET_ID` / `SHEET_GID` (or `REPORTS_GID`/`CLUSTERS_GID` for Pothole
+  Watch) / `CHECKSUM_GID` — from the published-CSV URL and the Sheet's tab
+  gids.
+- `GOOGLE_CLIENT_ID` — the shared client above; don't create a new one.
+- `APPS_SCRIPT_URL` — the exec URL from `clasp deploy`'s output.
+- `LS_SUFFIX` — **use the deployment's name/slug** (e.g. `"south-hams"`,
+  `"stafford"`), never a numeric Sheet gid — an earlier round of
+  deployments did this and it was corrected later. Must be unique across
+  every deployment sharing the `daemeous.github.io` origin: `localStorage`
+  is scoped per-origin, not per-path, so two deployments with the same
+  suffix (or no suffix, which falls back to `SHEET_GID`) can silently
+  read/write each other's cached data. Check no other repo already uses
+  the slug you're about to pick.
+- `TITLE`/`SUBTITLE`/`INITIAL_VIEW`/`INITIAL_ZOOM` — as normal. Keep
+  `TITLE` short — it's the sidebar `<h1>`, and on mobile it sits directly
+  under the menu-toggle button's footprint (see the "Shared assets"
+  section of `leaflet-map`'s README for how that's currently handled).
+- For a thin Leaflet Map repo, point the shared asset tags at the CURRENT
+  `shared_v` — see below — not `?shared_v=1` by default.
+
+### The `shared_v` cache-busting convention (Leaflet Map thin repos only)
+
+Every thin repo's `index.html` loads
+`https://daemeous.github.io/leaflet-map/styles.css?shared_v=N` and
+`.../core.js?shared_v=N`. This query string is **load-bearing, not
+decorative** — GitHub Pages' CDN caches these files for up to 10 minutes,
+and mobile browsers (Android Chrome especially) have been observed holding
+a stale cross-origin copy well beyond that, regardless of the service
+worker's network-first fetch handling. A new deployment should start at
+whatever `shared_v` `leaflet-map`'s own live `index.html` currently
+references — check it, don't assume `1`. **Whenever `core.js` or
+`styles.css` changes in `leaflet-map`, bump `?shared_v=N` in every
+consuming repo's `index.html`** (`south-hams`, `burton-uttoxeter`, `stone`,
+`barnsley`, `sthelens`, `leaflet-map-demo`, and any new one) and push each
+— `leaflet-map`'s own local `?v=N` on its same-origin tags is a separate
+counter and doesn't need to match.
+
+### Updating the central deployments list
+
+Every repo's README carries a "Live deployments" table listing every
+sibling deployment, so anyone landing on any one repo can find the others.
+**Adding a new deployment means adding it to this table in every existing
+repo, not just writing a README for the new one** — there's no single
+central file that lists them; the list is intentionally duplicated
+everywhere for discoverability. As of this writing that's `leaflet-map`,
+`leaflet-map-demo`, `south-hams`, `burton-uttoxeter`, `stone`, `barnsley`,
+`sthelens`, `stafford-potholes`, plus `leaflet-pipeline`'s own README.
+
+### LICENSE and Attributions
+
+Every deployment repo (and `leaflet-pipeline`) carries a `LICENSE`
+(PolyForm Noncommercial 1.0.0, full canonical text plus a `Required
+Notice:` copyright line — GitHub doesn't auto-detect this license
+regardless of formatting, confirmed via `/licenses/polyform-noncommercial-1.0.0`
+returning 404 on GitHub's own API, so a missing license badge in the repo
+sidebar is expected, not a sign something's wrong) plus a README "License"
++ "Attributions" section. Copy an existing repo's `LICENSE` and section
+verbatim for a new one rather than redrafting — the wording already
+accounts for the OSM/OGL data-licensing nuance: this project's
+non-commercial restriction covers its own code only, and can't legally
+extend to the upstream OSM (ODbL) / Ordnance Survey (Open Government
+Licence) data, both of which explicitly permit commercial use.
+
+### Keeping `leaflet-pipeline` in sync
+
+This file, `template/*.py`, and `apps-script/*.gs.txt` are duplicated into
+the published [leaflet-pipeline](https://github.com/Daemeous/leaflet-pipeline)
+repo. A change to any of the local originals isn't live for anyone else
+until it's copied over and pushed there too:
+```bash
+cp WORKFLOW.md leaflet-pipeline/WORKFLOW.md
+# ...and/or the specific template/*.py or apps-script/*.gs.txt files that changed
+cd leaflet-pipeline && git add -A && git commit -m "..." && git push
+```
 
 ## Scope pitfalls (ask, don't guess)
 
