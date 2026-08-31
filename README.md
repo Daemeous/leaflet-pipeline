@@ -19,6 +19,7 @@ The setup/build tooling behind the [leaflet-map](https://github.com/Daemeous/lea
 | Stone, Great Wyrley & Penkridge | https://daemeous.github.io/stone/ |
 | Barnsley, Penistone & Stocksbridge | https://daemeous.github.io/barnsley/ |
 | St Helens | https://daemeous.github.io/sthelens/ |
+| Shipley + Keighley and Ilkley | https://daemeous.github.io/shipley/ |
 
 **Pothole Watch:**
 
