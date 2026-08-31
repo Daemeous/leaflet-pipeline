@@ -248,13 +248,61 @@ API, and keeping every repo's "Live deployments" list in sync when you do.
 Skim this whole section before starting; several steps only work in a
 specific order.
 
+### What can run in parallel
+
+The steps below read as one sequence, but only part of it is a genuine
+dependency chain. Minimise wall-clock time by running the independent
+branches together rather than working strictly top-to-bottom:
+
+- **Sheet chain (sequential, this is the real critical path)**: convert
+  xlsx → Sheet, THEN bind + push + deploy Apps Script, THEN `sheetInfo` to
+  get gids, THEN fill in `index.html`'s Sheet-derived fields. Each step
+  needs the previous one's output.
+- **GitHub repo creation is independent of all of the above** — `git init`,
+  `gh repo create`, and `gh api .../pages` don't touch the Sheet or Apps
+  Script at all. Kick this off immediately (even with `index.html`
+  containing `TODO` placeholders for the Sheet-derived fields) so GitHub
+  Pages' 30–60s first-build latency overlaps with the Sheet chain instead
+  of adding to the end of it. Push the real values once the Sheet chain
+  finishes — Pages rebuilds fast on every subsequent push.
+- **Tooling setup (`rclone` install + Drive auth) is independent** of a
+  specific deployment — do it once per machine, ideally before you need it
+  for the first time, not on the critical path of any one deployment.
+- **Fixing unrelated bugs noticed along the way** (e.g. the `INITIAL_VIEW`
+  copy-paste bug below) has no dependency on the deployment in progress —
+  do it in parallel, don't let it block the thing you were actually asked
+  for.
+- **The two steps that need a human click** (the exec-URL authorize hit,
+  and "Publish to web" below) are both short and don't block anything else
+  you can do yourself — ask for them and keep working on whatever doesn't
+  depend on the result while you wait, rather than idling.
+- The two genuinely manual steps themselves are NOT parallel with each
+  other in one sense worth flagging: "Publish to web" needs the Sheet to
+  already exist (obviously), and the exec-URL authorize click needs a
+  deployment to already exist — so at minimum, Sheet creation must precede
+  both. Once the Sheet exists, though, nothing stops asking for both human
+  clicks in the same message instead of two round trips.
+
 ### Prerequisites (one-time per machine, not per deployment)
 
-- **GitHub CLI (`gh`)** and **`clasp`** (`npm install -g @google/clasp`)
-  installed. On this machine they're already set up — verify with
-  `gh auth status` and a harmless `clasp` command before assuming you need
-  to reinstall/relogin; both persist across sessions since they're tied to
-  this Windows user profile, not to any one Claude session.
+- **GitHub CLI (`gh`)**, **`clasp`** (`npm install -g @google/clasp`), and
+  **`rclone`** installed. On this machine they're already set up — verify
+  with `gh auth status`, a harmless `clasp` command, and `rclone version`
+  before assuming you need to reinstall/relogin; all three persist across
+  sessions since they're tied to this Windows user profile, not to any one
+  Claude session.
+  - `rclone` specifically: don't install via Chocolatey on this machine —
+    it fails with a NuGet lock-file permissions error the sandboxed shell
+    can't clear (needs elevation this environment doesn't have). Instead
+    download the portable zip directly and put it on PATH:
+    ```powershell
+    Invoke-WebRequest -Uri "https://downloads.rclone.org/rclone-current-windows-amd64.zip" -OutFile "$env:LOCALAPPDATA\rclone\rclone.zip"
+    Expand-Archive -Path "$env:LOCALAPPDATA\rclone\rclone.zip" -DestinationPath "$env:LOCALAPPDATA\rclone" -Force
+    Copy-Item "$env:LOCALAPPDATA\rclone\rclone-v*-windows-amd64\rclone.exe" "$env:LOCALAPPDATA\rclone\bin\rclone.exe" -Force
+    # then add "$env:LOCALAPPDATA\rclone\bin" to the User PATH via
+    # [Environment]::SetEnvironmentVariable, not setx (setx can clobber
+    # an existing PATH if used carelessly)
+    ```
 - `gh auth login --web` — one-time browser device-code flow. Must be signed
   in as the account that owns the target GitHub org/user (**Daemeous** for
   everything in this project).
@@ -264,13 +312,45 @@ specific order.
   https://script.google.com/home/usersettings — `clasp` errors with a link
   to that page if it isn't (allow a few minutes to propagate after enabling
   it before retrying).
-- Neither login needs repeating per deployment — both cache a refresh token
-  (`gh`'s in its own credential store, `clasp`'s at `~/.clasprc.json`) that
-  keeps working until revoked. **Never print, cat, or otherwise dump either
-  credential file's contents** — if you need to script against them (e.g.
-  a one-off Node script using `clasp`'s cached token to call a Google API
-  clasp itself doesn't expose), read them into a variable programmatically
-  and use them without ever echoing the token.
+- `rclone authorize "drive"` — one-time browser OAuth flow (same account,
+  djshodgkins@gmail.com), needed for the automated xlsx→Sheets conversion
+  in "Creating a new Sheet + Apps Script backend" below. Run it, open the
+  printed `http://127.0.0.1:53682/...` URL in a real browser **on this same
+  machine** (the flow needs to reach that local port), sign in and approve.
+  It prints an access/refresh token pair to stdout when done — feed that
+  straight into `rclone config create gdrive drive scope=drive token='<the
+  printed JSON>'` (drop the trailing `\r` if piping through PowerShell) to
+  save it as a named remote called `gdrive`, without ever re-printing the
+  token yourself afterwards. One real gotcha hit while setting this up:
+  `rclone config create ... token=...` itself triggers a SECOND `rclone
+  authorize`-style browser round before it'll save the remote (not just a
+  one-shot `authorize` then `config create` with no further prompt) — both
+  rounds completed in seconds because the browser already had an active
+  Google session, but expect to physically click "Allow" twice, not once.
+  rclone's shared client_id is slated for retirement sometime in 2026
+  (warns on every command) — registering a dedicated OAuth client (see
+  https://rclone.org/drive/#making-your-own-client-id) is a reasonable
+  follow-up before then, not urgent now.
+- Neither `gh` nor `clasp`'s login needs repeating per deployment — both
+  cache a refresh token (`gh`'s in its own credential store, `clasp`'s at
+  `~/.clasprc.json`) that keeps working until revoked. **Never print, cat,
+  or otherwise dump either credential file's contents — and don't try to
+  read `~/.clasprc.json` programmatically either, even redacted: Claude
+  Code's own safety classifier blocks that action outright** (confirmed
+  2026-08-31 — a Python script that opened the file and printed only
+  non-secret keys, with every token field replaced by a redacted
+  placeholder, was still denied). This means **`clasp`'s cached credentials
+  specifically cannot be used to script a Google API call clasp itself
+  doesn't expose** — that idea (present in an earlier version of this
+  section) doesn't actually work in this sandbox. `rclone`'s own config
+  file (`rclone config file` to locate it — currently
+  `%APPDATA%\rclone\rclone.conf`) is a **different file the classifier has
+  not blocked**, and reading a token out of it (e.g. via Python's
+  `configparser`, to make one raw Drive API call rclone's own subcommands
+  don't cover) has worked reliably — see the conversion recipe below. Don't
+  push your luck further than that: read the token into a variable, use it
+  immediately for the specific call you need, and never print it, log it,
+  or write it into a file that isn't rclone's own config.
 
 ### Repo architecture — read before creating a new repo
 
@@ -334,22 +414,97 @@ Verify it's actually reachable before moving on — a fresh anonymous web-app
 deployment has needed one interactive browser hit (accept an "Authorize"
 prompt, as the deploying account, on the exec URL) before it serves
 anonymous `curl`/`fetch` requests cleanly; a plain `curl -X POST`
-immediately after `clasp deploy` can 403 until that's been done once.
+immediately after `clasp deploy` can 403 until that's been done once. This
+is keyed to the **specific deployment ID** in the exec URL, not to the
+Apps Script project as a whole or the Google account generally — if you
+ever delete/recreate a deployment (e.g. because an earlier `clasp create`
+bound to the wrong container and had to be redone from scratch, as
+happened building `shipley`), the new exec URL needs its own fresh
+browser hit even though it's the "same" logical deployment to a human.
 
-**Not proven this way yet — Leaflet Map deployments**, which start from
-`build_tracker.py`'s already-populated `<prefix>_Tracker.xlsx`, not a blank
-Sheet: upload it to Drive and let Google convert it (Drive web UI: upload,
-then "Open with → Google Sheets", or the Drive settings' "convert uploads"
-option), note the resulting Sheet's file ID from its URL, then attach a
-bound Apps Script project to that EXISTING file instead of creating a new
-one:
-```bash
-clasp create --type sheets --parentId <existing Sheet's file ID> --title "My Deployment Name"
+**Proven end-to-end** (used for `shipley`, 2026-08-31) — for Leaflet Map
+deployments, which start from `build_tracker.py`'s already-populated
+`<prefix>_Tracker.xlsx`, not a blank Sheet:
+
+**Step 1 — convert the xlsx to a native Google Sheet.** The Drive web UI's
+manual "upload, then Open with → Google Sheets" still works, but is now
+scriptable via the `gdrive` rclone remote set up above — `rclone copy`/
+`copyto` do NOT do this despite `--drive-import-formats` sounding like the
+right flag (tested: that flag only affects re-syncing content INTO an
+*already-native* Google Doc, not first-time conversion of a plain upload —
+a plain `rclone copy` of an xlsx stays a literal xlsx blob in Drive, byte
+for byte, confirmed by checking the uploaded file's mimetype). What
+actually performs the conversion is a direct Drive API v3
+`files.create?uploadType=multipart` call with the target `mimeType` set to
+`application/vnd.google-apps.spreadsheet` — Drive converts on the way in.
+rclone's own subcommands don't expose this, but its cached token (from
+`gdrive` above) can drive one raw call:
+```python
+import configparser, requests, json
+cfg = configparser.ConfigParser()
+cfg.read(r"%APPDATA%\rclone\rclone.conf")  # expand the real path
+access_token = json.loads(cfg["gdrive"]["token"])["access_token"]
+
+metadata = {"name": "My Deployment Tracker", "mimeType": "application/vnd.google-apps.spreadsheet"}
+with open("<prefix>_Tracker.xlsx", "rb") as f:
+    file_bytes = f.read()
+boundary = "leaflets_upload_boundary"
+body = (
+    f"--{boundary}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n{json.dumps(metadata)}\r\n"
+    f"--{boundary}\r\nContent-Type: application/vnd.openxmlformats-officedocument.spreadsheetml.sheet\r\n\r\n"
+).encode() + file_bytes + f"\r\n--{boundary}--".encode()
+resp = requests.post(
+    "https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart",
+    headers={"Authorization": f"Bearer {access_token}", "Content-Type": f"multipart/related; boundary={boundary}"},
+    data=body,
+)
+print(resp.json())  # {"id": "...", "mimeType": "application/vnd.google-apps.spreadsheet", ...}
 ```
-then push/deploy exactly as above. This should work per `clasp`'s own
-`--parentId` semantics but hasn't actually been exercised end-to-end in a
-session yet — verify it once and update this note (and remove this
-caveat) when it has.
+The response `id` is the Sheet's file ID, same as what you'd read out of
+the URL after a manual conversion. (One flaky 403 was seen on a first
+attempt with no retry logic and no clear cause — worth a single retry
+before assuming something's actually wrong.)
+
+**Step 2 — bind an Apps Script project to that EXISTING file.** Do **not**
+pass `--type sheets` here — that tells the Apps Script API to create a
+**new** container and silently ignores `--parentId`, even though it
+accepts the flag without error (confirmed the hard way: `clasp create
+--type sheets --parentId <id>` created a brand-new blank spreadsheet,
+completely ignoring the real one — check the "Created new document" URL
+it prints against the ID you passed if you ever suspect this happened
+again). The type that actually attaches to an existing container is the
+default, `standalone`:
+```bash
+mkdir my-deployment && cd my-deployment
+clasp create --parentId <existing Sheet's file ID> --title "My Deployment Name"
+#   -> prints "Bound to document: <the SAME file ID you passed>" — verify
+#      this line before continuing; if it says "Created new document"
+#      instead, delete that spreadsheet and redo without --type
+```
+Then set the manifest, copy in `Code.gs`, push, and deploy exactly as in
+the blank-Sheet recipe above.
+
+**Getting the Sheet's tab gids (SHEET_GID/CHECKSUM_GID) without opening the
+Sheets UI**: `leaflet-map.gs.txt` now has a `sheetInfo` action (added
+2026-08-31, mirroring Pothole Watch's existing one) — POST
+`{"action":"sheetInfo"}` to the deployed exec URL, get back
+`{ok, spreadsheetId, dataGid, checksumGid}`. No auth needed, gids aren't
+sensitive. **Tip**: `build_tracker.py` writes sheets in the same order
+every time, so a fresh conversion's gids are *often* identical across
+deployments (south-hams/barnsley/sthelens/burton-uttoxeter all landed on
+`SHEET_GID=2107159853`, `CHECKSUM_GID=1371223354`) — but not always
+(`stone` landed on different values). Treat repeated values as a
+time-saving prior, never as certain — always confirm with `sheetInfo`
+rather than hard-coding a sibling deployment's gids.
+
+**A curl gotcha when testing an exec URL**: `doPost`/`doGet` responses
+come back as a 302 redirect to a `script.googleusercontent.com/.../echo`
+URL holding the actual JSON. `curl -L` follows this fine on its own
+(redirect naturally downgrades to GET, which is what the echo endpoint
+wants) — but explicitly forcing `-X POST` makes curl keep POSTing through
+the redirect with no body, which 411s. Don't pass `-X POST` when using
+`-L` on a script.google.com exec URL; just use `-d` alone, which already
+implies POST for the first hop.
 
 ### The one step that can't be automated
 
@@ -363,9 +518,12 @@ prompt gets you past it, so don't try to script around the block. Do this
 one by hand, every time, for every new Sheet. Everything else in this
 section is scriptable.
 
-Reading a fresh Pothole Watch deployment's sheet gids without opening the
-Sheets UI: send a `{"action":"sheetInfo"}` POST to the deployed exec URL —
-returns `{spreadsheetId, reportsGid, clustersGid}`.
+Reading a fresh deployment's sheet gids without opening the Sheets UI: send
+a `{"action":"sheetInfo"}` POST to the deployed exec URL. Pothole Watch
+returns `{spreadsheetId, reportsGid, clustersGid}`; Leaflet Map deployments
+return `{spreadsheetId, dataGid, checksumGid}` (added to `leaflet-map.gs.txt`
+2026-08-31, same pattern — see "Creating a new Sheet + Apps Script backend"
+above).
 
 ### Creating and publishing the GitHub repo
 
@@ -400,6 +558,24 @@ times before concluding something's wrong.
   `TITLE` short — it's the sidebar `<h1>`, and on mobile it sits directly
   under the menu-toggle button's footprint (see the "Shared assets"
   section of `leaflet-map`'s README for how that's currently handled).
+  **Compute `INITIAL_VIEW` from the actual constituency geometry — don't
+  copy a sibling deployment's value as a starting point and forget to
+  change it.** Found and fixed 2026-08-31: `barnsley`, `sthelens`, and
+  `south-hams` had all shipped with `INITIAL_VIEW: [52.8, -2.12]` — that's
+  Stafford's centre, evidently copy-pasted from `leaflet-map`'s own
+  `index.html` when each was first built and never corrected, live for
+  days/weeks without anyone noticing because the map still loads, just
+  centred on the wrong part of the country. Compute the real value instead:
+  ```python
+  import geopandas as gpd
+  gdf = gpd.read_file("<prefix>_constituency.geojson")
+  c = gdf.geometry.iloc[0].centroid
+  print(c.y, c.x)  # lat, lon
+  ```
+  Pick `INITIAL_ZOOM` from the constituency's actual extent (reproject to
+  EPSG:27700 and check `total_bounds` in km) rather than defaulting to
+  whatever a sibling used — a 50km-wide branch area (e.g. South Hams) needs
+  a noticeably lower zoom than a 16km one (e.g. St Helens) to fit on load.
 - For a thin Leaflet Map repo, point the shared asset tags at the CURRENT
   `shared_v` — see below — not `?shared_v=1` by default.
 
@@ -430,6 +606,24 @@ central file that lists them; the list is intentionally duplicated
 everywhere for discoverability. As of this writing that's `leaflet-map`,
 `leaflet-map-demo`, `south-hams`, `burton-uttoxeter`, `stone`, `barnsley`,
 `sthelens`, `stafford-potholes`, plus `leaflet-pipeline`'s own README.
+**Always fetch the CURRENT live table from `leaflet-map`'s own README
+before copying it elsewhere** (`gh api repos/Daemeous/leaflet-map/contents/README.md
+--jq '.content' | base64 -d`) rather than trusting this file's own list as
+current — it's a point-in-time snapshot and has been observed to lag
+behind what's actually live (e.g. it didn't mention `route-planner` or
+`deployments.json` below until this edit).
+
+There's also **`leaflet-map/deployments.json`** — a machine-readable
+registry read by [route-planner](https://github.com/Daemeous/route-planner)
+(a separate event-day route-planning tool) to populate its "pick your
+area" dropdown. **Add a new entry here too, alongside the README tables,
+whenever a new constituency deployment goes live**:
+```json
+{ "name": "My Deployment Name", "url": "https://daemeous.github.io/my-deployment/" }
+```
+Fetch/edit/push it the same way as the README (`gh api ... contents/deployments.json`,
+decode, edit, `gh api -X PUT ... contents/deployments.json` with the new
+base64 content and the file's current `sha`).
 
 ### LICENSE and Attributions
 

@@ -56,6 +56,7 @@ function doPost(e) {
 	 	 if (body.action === "ban")   return handleBan(body);
 	 	 if (body.action === "unban") return handleUnban(body);
 	 	 if (body.action === "pendingStatus") return handlePendingStatus(body);
+	 	 if (body.action === "sheetInfo") 	return handleSheetInfo(body);
 	 	 return jsonResp({ ok: false, error: "Unknown action" });
 	 } catch(err) {
 	 	 return jsonResp({ ok: false, error: err.message });
@@ -474,6 +475,23 @@ function trimOldChangelogEntries(log) {
 }
 
 // ?? Sheet helper ??????????????????????????????????????????????????????????????
+// Returns the spreadsheet id and each key sheet's numeric gid, so a new
+// deployment's index.html can be filled in (SHEET_GID/CHECKSUM_GID) without
+// opening the Sheets UI — same pattern as Pothole Watch's sheetInfo action.
+// No auth required: gids aren't sensitive, they're just needed to finish
+// wiring up a fresh deployment's config.
+function handleSheetInfo(body) {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const dataSheet = getDataSheet();
+  const checksumSheet = ss.getSheetByName("Checksum");
+  return jsonResp({
+    ok: true,
+    spreadsheetId: ss.getId(),
+    dataGid: dataSheet.getSheetId(),
+    checksumGid: checksumSheet ? checksumSheet.getSheetId() : null
+  });
+}
+
 function getDataSheet() {
 	 const ss = SpreadsheetApp.getActiveSpreadsheet();
 	 return ss.getSheetByName(DATA_SHEET_NAME) || ss.getSheets()[0];
