@@ -20,6 +20,7 @@ The setup/build tooling behind the [leaflet-map](https://github.com/Daemeous/lea
 | Barnsley, Penistone & Stocksbridge | https://daemeous.github.io/barnsley/ |
 | St Helens | https://daemeous.github.io/sthelens/ |
 | Shipley + Keighley and Ilkley | https://daemeous.github.io/shipley/ |
+| Bassetlaw | https://daemeous.github.io/bassetlaw/ |
 
 **Pothole Watch:**
 
