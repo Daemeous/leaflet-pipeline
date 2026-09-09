@@ -21,6 +21,7 @@ The setup/build tooling behind the [leaflet-map](https://github.com/Daemeous/lea
 | St Helens | https://daemeous.github.io/sthelens/ |
 | Shipley + Keighley and Ilkley | https://daemeous.github.io/shipley/ |
 | Bassetlaw | https://daemeous.github.io/bassetlaw/ |
+| East Grinstead and Uckfield | https://daemeous.github.io/east-grinstead-uckfield/ |
 
 **Pothole Watch:**
 
