@@ -170,6 +170,30 @@ Leaflets/
    (roughly electorate / 1.5–2) is the single strongest signal something's
    wrong — check that first.
 
+   That heuristic is a **floor, not a ceiling** — a count *above*
+   electorate/1.5 isn't automatically a bug, and two different legitimate
+   causes have already shown up:
+   - **Dense terraced/flatted housing** inflates UPRNs-per-elector (more
+     separately-addressed dwellings per building). Shipley + Keighley and
+     Ilkley (mill-town terraces) landed at ~2x electorate.
+   - **Rural areas** land high for the opposite reason: OS Open UPRN's
+     "core" export (the only file this pipeline uses) carries no
+     residential/non-residential classification, so every farm outbuilding,
+     agricultural shed, stable, or similar gets its own UPRN with no
+     resident behind it, and `estimate_residences_uprn.py`'s only filter
+     (dropping >=150-UPRNs-at-one-exact-coordinate "commercial clusters")
+     only catches dense point clusters, not these dispersed ones. South
+     Hams and East Grinstead and Uckfield (both rural) landed at ~1x and
+     ~0.96x electorate respectively — well above the naive range, for this
+     reason rather than a processing error.
+   There's no universal ceiling to check a new count against — instead,
+   compare the ratio to a previously-built constituency of similar
+   character (dense/urban vs. rural) before concluding either "this is
+   fine" or "something's wrong". A ratio wildly out of line with *every*
+   prior constituency of similar character is still worth investigating;
+   one that matches the pattern of similar areas isn't a bug just because
+   it's far from the naive electorate/1.5–2 range.
+
 10. **Build the Google-Sheets-ready tracker**: `python build_tracker.py`.
    Takes `<prefix>_Leafletting_residences_uprn.xlsx` and writes
    `<prefix>_Tracker.xlsx` with the full sheet set a hosted tracker needs:
