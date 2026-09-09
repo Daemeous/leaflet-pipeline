@@ -47,6 +47,7 @@ GPKG_FILE        = Path("../data/Boundary-Line.gpkg")
 WARD_LAYER       = "district_borough_unitary_ward"
 DISTRICT_LAYER   = "district_borough_unitary"
 PARISH_LAYER     = "parish"
+CONST_LAYER      = "westminster_const"
 ROADS_JSON       = "roads_raw.json"
 OVERPASS_URL     = "https://overpass-api.de/api/interpreter"
 
@@ -256,6 +257,28 @@ def step2_fetch_boundaries(cfg):
                 )
 
             matched.loc[idx, "geometry"] = ward_geom
+
+    # ── Clip to the actual constituency boundary (optional) ──────────────────
+    # A ward straddling a constituency boundary isn't always split along a
+    # whole civil parish (parish_exclusions above only handles that case) —
+    # boundary reviews sometimes split a ward using sub-parish building
+    # blocks (e.g. output areas). When that happens, intersecting every
+    # matched ward with the constituency's own polygon from the
+    # `westminster_const` layer is exact regardless of what the split
+    # follows. Safe to apply unconditionally when set: fully-contained wards
+    # are unaffected (intersection returns the same geometry).
+    const_name = cfg.get("westminster_const_name")
+    if const_name:
+        const_gdf = gpd.read_file(GPKG_FILE, layer=CONST_LAYER).to_crs(4326)
+        const_row = const_gdf[const_gdf["Name"] == const_name]
+        if len(const_row) != 1:
+            sys.exit(
+                f"ERROR: westminster_const_name '{const_name}' matched "
+                f"{len(const_row)} rows in the {CONST_LAYER} layer (need exactly 1)"
+            )
+        const_poly = const_row.geometry.iloc[0]
+        matched["geometry"] = matched.geometry.intersection(const_poly)
+        print(f"  Clipped all ward geometries to constituency boundary '{const_name}'")
 
     # ── Auto-compute bbox from the (possibly clipped) ward geometries ────────
     minx, miny, maxx, maxy = matched.total_bounds

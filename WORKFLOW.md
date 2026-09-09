@@ -78,6 +78,17 @@ Leaflets/
      X parish". Check the `parish` layer (same File_Name) for the parish's
      exact name and confirm it's ~100% inside the ward before subtracting
      (a quick area-ratio sanity check, not just a name match).
+   - `westminster_const_name`: for a genuinely new (post-boundary-review)
+     constituency where a ward is split by the constituency boundary along
+     something OTHER than a whole civil parish (found 2026-09-09 building
+     East Grinstead and Uckfield — a 2023-review seat split two Mid Sussex
+     wards using sub-parish building blocks, not whole parishes). Do the
+     same overlap-ratio scan as for parish_exclusions (ward area intersected
+     with the constituency's own polygon in the `westminster_const` layer,
+     vs the ward's own area) — a ward landing at neither ~0% nor ~100% needs
+     this. Set it to the exact `Name` value from `westminster_const` and
+     every matched ward gets clipped to that polygon as a final step; safe
+     to leave unset (the common case) when every ward is wholly in or out.
    - `authorised_emails`: only needed if this constituency's tracker will be
      hosted as a Google Sheet with a bound Apps Script (see step 10) — the
      email addresses allowed to bypass its edit locks. Leave as `[]`

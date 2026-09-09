@@ -53,6 +53,19 @@ parish_exclusions
     parish (check the `parish` layer, same File_Name). Leave as {} if no
     ward needs this.
 
+westminster_const_name
+    Optional. The exact `Name` value in the `westminster_const` layer for
+    this constituency. When set, every matched ward's geometry is clipped
+    to this polygon as a final step (after parish_exclusions) — use this
+    when a ward is split by the constituency boundary along something
+    OTHER than a whole civil parish (e.g. a 2023 boundary-review split
+    below parish level, using output areas). Check with a quick overlap-
+    ratio scan (ward area intersected with the constituency polygon, vs
+    ward's own area) before assuming a ward is either wholly in or wholly
+    out — a ward at ~70-99% overlap (not ~100% or ~0%) needs either this
+    or parish_exclusions. Leave unset if every ward is either wholly in or
+    wholly out of the constituency (the common case).
+
 authorised_emails
     Used only by build_tracker.py, which runs after estimate_residences_uprn.py
     and adds the Dashboard/Changelog/Checksum/Authorised sheets needed to
@@ -81,6 +94,8 @@ CONSTITUENCIES = {
         "parish_exclusions": {
             # "Ward Name": ["Parish Name"],
         },
+
+        "westminster_const_name": None,  # e.g. "East Grinstead and Uckfield Co Const"
 
         "authorised_emails": [],
     },
