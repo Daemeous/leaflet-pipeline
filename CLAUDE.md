@@ -33,7 +33,7 @@ Leaflets/
                         Daemeous/leaflet-pipeline repo (template/, this
                         file, and the Apps Script sources) — keep in sync,
                         see "Keeping leaflet-pipeline in sync" below
-  WORKFLOW.md         this file
+  CLAUDE.md           this file
 ```
 
 ## Step-by-step for a new constituency
@@ -682,7 +682,7 @@ the published [leaflet-pipeline](https://github.com/Daemeous/leaflet-pipeline)
 repo. A change to any of the local originals isn't live for anyone else
 until it's copied over and pushed there too:
 ```bash
-cp WORKFLOW.md leaflet-pipeline/WORKFLOW.md
+cp CLAUDE.md leaflet-pipeline/CLAUDE.md
 # ...and/or the specific template/*.py or apps-script/*.gs.txt files that changed
 cd leaflet-pipeline && git add -A && git commit -m "..." && git push
 ```
