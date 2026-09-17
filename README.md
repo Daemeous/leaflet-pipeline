@@ -35,12 +35,14 @@ The setup/build tooling behind the [leaflet-map](https://github.com/Daemeous/lea
 
 | Path | Purpose |
 |---|---|
-| `WORKFLOW.md` | The full step-by-step for building a leafletting spreadsheet for a new constituency, ward-name verification pitfalls, refreshing an existing constituency, and a running log of bugs already found and fixed — **read this before touching the pipeline**, it exists specifically so mistakes aren't repeated |
+| `WORKFLOW.md` | The human-readable step-by-step for building a leafletting dataset for a new constituency, ward-name verification pitfalls, refreshing an existing constituency, and a running log of bugs already found and fixed — **read this before touching the pipeline**, it exists specifically so mistakes aren't repeated |
+| `CLAUDE.md` | The same ground, written as working instructions for an AI coding agent (Claude Code) rather than as prose for a human — auto-loaded if you're driving this repo with one |
 | `template/constituency_config.py` | Fill-in-the-blanks config for one constituency/area (wards, Boundary-Line `File_Name`, parish exclusions, authorised editor emails) |
 | `template/run_pipeline.py` | Fetches ward boundaries + OSM roads, clips roads to wards, writes `<prefix>_Leafletting.xlsx` |
 | `template/fill_gaps.py` | Recovers roads OSM's `way[highway][name]` query misses (split/unnamed segments) and reports genuinely unnamed streets for manual naming |
-| `template/estimate_residences_uprn.py` | UPRN-buffer residence counting per road — the only method verified not to silently undercount (see `WORKFLOW.md` step 7 for why the OSM-building-footprint approach was abandoned) |
+| `template/estimate_residences_uprn.py` | UPRN-buffer residence counting per road — the only method verified not to silently undercount (see `WORKFLOW.md` for why the OSM-building-footprint approach was abandoned) |
 | `template/add_unnamed_roads.py` | Appends unnamed-road clusters as placeholder rows |
+| `template/export_gis.py` | Writes the road/ward/constituency data out as a real GIS file (`.gpkg` by default, or `.geojson`) instead of just Excel — open directly in QGIS or any other GIS tool |
 | `template/build_tracker.py` | Builds the full Google-Sheets-ready tracker workbook (`Data`/`Dashboard`/`Changelog`/`Checksum`/`Authorised` sheets, dashboard charts) from the pipeline's output |
 | `template/finalize_output.py` | Merges a fresh pipeline run into an existing constituency's *live* tracker without disturbing in-flight `Status`/row-position data — use this instead of re-running `estimate_residences_uprn.py` directly on a constituency with real progress |
 | `cluster_potholes.py` | Batch job for Pothole Watch: snaps reports to the road network, groups nearby reports into repair sections, ranks them by priority |
