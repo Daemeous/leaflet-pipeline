@@ -227,6 +227,13 @@ Leaflets/
    the total residence count, so whoever's checking it has a number to
    sanity-check against their own knowledge of the area.
 
+12. **Deploy it.** Publishing (GitHub repo + Google Sheet + Apps Script, see
+   "Publishing a deployment" below) is part of the default pipeline for a
+   new constituency, not a separate opt-in step — do it right after
+   delivering the spreadsheet unless the user says they just want the file
+   for now. Refreshes of an existing constituency (see below) don't need
+   this repeated unless something deployment-related actually changed.
+
 ## Refreshing an existing constituency
 
 Re-running `run_pipeline.py` on a constituency built before 2026-08-27 will
@@ -686,6 +693,44 @@ cp CLAUDE.md leaflet-pipeline/CLAUDE.md
 # ...and/or the specific template/*.py or apps-script/*.gs.txt files that changed
 cd leaflet-pipeline && git add -A && git commit -m "..." && git push
 ```
+
+## Speeding up with parallelism (multiple constituencies, subagents vs. background bash)
+
+Two different kinds of parallelism apply to this pipeline — don't reach
+for the heavier one when the lighter one already covers it:
+
+- **Background bash, single agent thread** — the right tool whenever the
+  parallel work is just shell commands with a real dependency chain (see
+  "What can run in parallel" under Publishing a deployment above: GitHub
+  repo creation running alongside the Sheet→Apps Script chain, one-time
+  `rclone`/`gh` setup, an unrelated bug fix noticed along the way). One
+  agent launches each command with `run_in_background` and keeps working
+  on the next step instead of blocking on it. Spinning up a separate
+  subagent for this adds coordination overhead for no benefit — there's no
+  independent judgment happening, just waiting on an external process.
+- **Separate subagents** — worth it only when building 2+ constituencies
+  in the same session, where each one needs real judgment calls (verifying
+  ward names against Boundary-Line, deciding `parish_exclusions` /
+  `westminster_const_name`, sanity-checking the residence total against a
+  comparable constituency) that would otherwise force one agent to keep
+  context-switching between unrelated areas. In that case, spawn one Agent
+  per constituency to run steps 1–11 (config through tracker) independently
+  and report back, rather than working them round-robin yourself. Don't
+  bother for a single constituency, and don't bother for the
+  deployment/publishing stage alone (step 12 on its own) — that's almost
+  entirely shell commands, better handled by background bash than by
+  paying a subagent's fresh-context cost.
+
+**Shared-resource caveat that applies to both**: the public Overpass
+instance rate-limits `fill_gaps.py`'s all-highways fetch specifically —
+running it for more than one constituency at once (whether via background
+bash or parallel subagents) reliably 429s (see "Don't run more than one
+`fill_gaps.py` Overpass fetch at a time" below). Serialize just that one
+step across constituencies; `run_pipeline.py`'s smaller fetch and
+everything downstream (UPRN scan, tracker build, Sheet conversion, Apps
+Script push, GitHub repo/Pages setup) tolerates real parallelism fine —
+including across constituencies, since each writes to its own folder/repo/
+Sheet with no shared state.
 
 ## Scope pitfalls (ask, don't guess)
 
