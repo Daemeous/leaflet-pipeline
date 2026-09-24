@@ -560,6 +560,22 @@ prompt gets you past it, so don't try to script around the block. Do this
 one by hand, every time, for every new Sheet. Everything else in this
 section is scriptable.
 
+**Publish BOTH the `Data` and `Checksum` sheets, individually — never
+"Entire document."** `SHEET_ID` is one ID shared by the whole spreadsheet,
+but which tabs are actually exportable as CSV under that ID depends on
+what you selected in the publish dialog. `core.js` fetches two separate
+CSVs off the same `SHEET_ID` (`SHEET_GID` for `Data`, `CHECKSUM_GID` for
+`Checksum` — the checksum poll is how it detects edits made outside the
+Apps Script's own logging path), so publishing only `Data` leaves the
+checksum fetch 404ing. Do NOT reach for "Entire document" to sidestep this
+— that would also publish `Changelog` (contains editor emails) and
+`Authorised` (the allow-list itself), which is a real exposure, not a
+theoretical one. Publish `Data` and `Checksum` as two separate CSV
+selections in the same dialog instead (found 2026-09-24 building a
+Stafford/OS-Open-Roads test deployment off `leaflet-map-demo` — the first
+publish only covered `Data` and the checksum fetch broke silently until
+caught).
+
 Reading a fresh deployment's sheet gids without opening the Sheets UI: send
 a `{"action":"sheetInfo"}` POST to the deployed exec URL. Pothole Watch
 returns `{spreadsheetId, reportsGid, clustersGid}`; Leaflet Map deployments
