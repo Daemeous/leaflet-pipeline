@@ -41,6 +41,25 @@ const STREET_COL 	 	 	 	= 1; 	 	 	 	 	 	 // A 	 Street
 const WARD_COL 	 	 	 	 	= 4; 	 	 	 	 	 	 // D 	 Ward
 const CHANGELOG_MAX_AGE_DAYS = 30; 	 	 	 // entries older than this get trimmed
 
+// Divides Data into trackable roads (above) and roads with zero residences
+// kept only for route-planner to route through (below) — must match
+// ROUTE_PLANNER_MARKER in build_tracker.py / core.js exactly. Every write
+// path below is bound to getLastTrackableRow() rather than getLastRow(), so
+// a client can never edit Status/partial_geometry on a route-only row even
+// if it somehow sent one. A sheet with no marker row (every deployment
+// built before this existed) behaves exactly as before.
+const ROUTE_PLANNER_MARKER = "###ROUTE_PLANNER_ONLY_BELOW###";
+
+function getLastTrackableRow(sheet) {
+	 const lastRow = sheet.getLastRow();
+	 if (lastRow < 2) return lastRow;
+	 const streetVals = sheet.getRange(2, STREET_COL, lastRow - 1, 1).getValues();
+	 for (let i = 0; i < streetVals.length; i++) {
+	 	 if (streetVals[i][0] === ROUTE_PLANNER_MARKER) return i + 1; // row 2+i is the marker, so i+1 is the last trackable row
+	 }
+	 return lastRow;
+}
+
 // ?? POST handler ??????????????????????????????????????????????????????????????
 function doPost(e) {
 	 try {
@@ -83,7 +102,7 @@ function handleUpdate(body) {
 	 if (isNaN(row) || row < 2) 	 	 return jsonResp({ ok: false, error: "Invalid row index" });
 
 	 const sheet = getDataSheet();
-	 if (row > sheet.getLastRow()) return jsonResp({ ok: false, error: "Row out of range" });
+	 if (row > getLastTrackableRow(sheet)) return jsonResp({ ok: false, error: "Row out of range" });
 	 const prevStatus = sheet.getRange(row, STATUS_COL).getValue();
 
 	 sheet.getRange(row, STATUS_COL).setValue(status);
@@ -105,7 +124,7 @@ function handlePartial(body) {
 	 if (!/^[-|:.\d a-zA-Z]+$/.test(pg)) return jsonResp({ ok: false, error: "Invalid partial geometry format" });
 
 	 const sheet = getDataSheet();
-	 if (row > sheet.getLastRow()) return jsonResp({ ok: false, error: "Row out of range" });
+	 if (row > getLastTrackableRow(sheet)) return jsonResp({ ok: false, error: "Row out of range" });
 	 const prevPg = sheet.getRange(row, PARTIAL_COL).getValue();
 
 	 sheet.getRange(row, PARTIAL_COL).setValue(pg);
@@ -249,7 +268,7 @@ function handlePropose(body) {
   if (isNaN(row) || row < 2) return jsonResp({ ok: false, error: "Invalid row index" });
 
   const dataSheet = getDataSheet();
-  if (row > dataSheet.getLastRow()) return jsonResp({ ok: false, error: "Row out of range" });
+  if (row > getLastTrackableRow(dataSheet)) return jsonResp({ ok: false, error: "Row out of range" });
 
   const pending = getPendingSheet();
   const outstanding = countOutstandingPending(pending, email);
@@ -497,7 +516,8 @@ function handleSheetInfo(body) {
     ok: true,
     spreadsheetId: ss.getId(),
     dataGid: dataSheet.getSheetId(),
-    checksumGid: checksumSheet ? checksumSheet.getSheetId() : null
+    checksumGid: checksumSheet ? checksumSheet.getSheetId() : null,
+    lastTrackableRow: getLastTrackableRow(dataSheet)
   });
 }
 

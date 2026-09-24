@@ -234,6 +234,52 @@ Leaflets/
    for now. Refreshes of an existing constituency (see below) don't need
    this repeated unless something deployment-related actually changed.
 
+## Route-planner-only roads (zero-residence roads)
+
+`build_tracker.py` (step 10) segregates roads with `Residences == 0`
+(bridges, bypasses, farm tracks, connector roads — kept in the Data sheet at
+all only because route-planner needs them to route through) rather than
+mixing them into the leafletting tracker or dropping them. It moves them
+below a single sentinel row (`ROUTE_PLANNER_MARKER`,
+`"###ROUTE_PLANNER_ONLY_BELOW###"` in column A) appended at the very end of
+Data — a stable partition, so every other row keeps its original relative
+position (safe to run on a `finalize_output.py`-merged file, which depends
+on row order never changing for in-flight tracking).
+
+Every consumer of the published Data CSV has to agree on this exact marker
+string — it's duplicated in three places, all kept in sync:
+- `template/build_tracker.py` (writes it)
+- `Leaflet App/core.js` (`ROUTE_PLANNER_MARKER` const near the top of the
+  IIFE) — `ingestRows()` splits the parsed CSV at this row before any
+  trackable-road processing runs, so route-only rows never enter
+  `allRoads`, stats, wardCounts, or Dashboard-derived numbers, and never get
+  a real `_rowIdx` (can't be edited). A sheet with no marker row (every
+  deployment built before this existed) behaves exactly as before —
+  everything is treated as trackable. An authorised-editor-only sidebar
+  toggle ("🩷 Route-only roads") renders them on the map in hot pink
+  (`#ff1493`) as a separate, non-interactive, non-editable layer — purely a
+  spot-checking aid, not part of the tracked dataset.
+- `leaflet-pipeline/apps-script/leaflet-map.gs.txt` — `getLastTrackableRow()`
+  bounds every Data write path (`handleUpdate`/`handlePartial`/
+  `handlePropose`) to reject a row at or below the marker, so a
+  status/partial-geometry edit can never land on a route-only row even if a
+  client somehow sent one. `handleSheetInfo` also reports
+  `lastTrackableRow` for debugging.
+
+`build_tracker.py` also bounds every Dashboard/Checksum formula that reads
+Data to `$2:$last_trackable_row` instead of a full-column reference — a
+full column would sweep the route-only tail's stale `Status` values into
+ward/status counts and silently skew them (the same class of bug the
+Dashboard range rewrite already fixed once for ward-count mismatches).
+
+route-planner's own reader deliberately does **not** stop at the marker —
+it wants every road with geometry, residences or not, to route through.
+
+This is fully backward compatible: a Data sheet built before this existed
+has no marker row, so every deployment's live sheet keeps working exactly
+as before until `build_tracker.py` is re-run against it (a refresh, see
+below) and actually produces one.
+
 ## Refreshing an existing constituency
 
 Re-running `run_pipeline.py` on a constituency built before 2026-08-27 will

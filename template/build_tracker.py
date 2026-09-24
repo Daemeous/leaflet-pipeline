@@ -68,6 +68,16 @@ EXCEL_OUTPUT = f"{_prefix}_Tracker.xlsx"
 
 STATUS_LIST = "Not_Started,Planned,In_Progress,Complete"
 
+# A single sentinel row dividing the Data sheet into two zones: real
+# leafletable roads above (Residences > 0) and, below this row, roads with
+# zero residences (bridges/bypasses/farm tracks etc.) kept only so
+# route-planner can route through them. core.js's CSV parser and the Apps
+# Script's write-path bound checks (leaflet-map.gs.txt) both stop at this
+# exact row — every consumer of the published Data CSV has to agree on this
+# string. Route-planner's own reader deliberately does NOT stop here, since
+# it wants every road with geometry regardless of residence count.
+ROUTE_PLANNER_MARKER = "###ROUTE_PLANNER_ONLY_BELOW###"
+
 DASHBOARD_HEADERS = [
     "Ward", "Streets", "Complete", "In Progress", "Planned", "Not Started",
     "% Roads Complete", "Residences", "Estimate served", "% Residences Complete",
@@ -80,7 +90,49 @@ CHANGELOG_HEADERS = [
 ]
 
 
-def format_data_sheet(ws, n_data_rows):
+def partition_route_only_rows(ws):
+    """Stable-partition the Data rows so roads with Residences == 0 move
+    below a single ROUTE_PLANNER_MARKER row, keeping every other row's
+    relative order untouched. Safe to run on a file that came out of
+    finalize_output.py's position-preserving merge — trackable rows never
+    change position relative to each other, only the zero-residence rows
+    get pulled out and appended after the marker. Returns the last
+    trackable row number (1-based; row 1 is the header), or ws.max_row
+    unchanged if there's nothing to segregate.
+    """
+    headers = [c.value for c in ws[1]]
+    res_col = headers.index("Residences")
+
+    rows = [tuple(c.value for c in row) for row in ws.iter_rows(min_row=2, max_row=ws.max_row)]
+    trackable = [r for r in rows if (r[res_col] or 0) != 0]
+    route_only = [r for r in rows if (r[res_col] or 0) == 0]
+
+    if not route_only:
+        return ws.max_row
+
+    for row in ws.iter_rows(min_row=2, max_row=ws.max_row):
+        for cell in row:
+            cell.value = None
+
+    r = 2
+    for row_vals in trackable:
+        for c, v in enumerate(row_vals, start=1):
+            ws.cell(row=r, column=c, value=v)
+        r += 1
+    last_trackable_row = r - 1
+
+    ws.cell(row=r, column=1, value=ROUTE_PLANNER_MARKER)
+    r += 1
+
+    for row_vals in route_only:
+        for c, v in enumerate(row_vals, start=1):
+            ws.cell(row=r, column=c, value=v)
+        r += 1
+
+    return last_trackable_row
+
+
+def format_data_sheet(ws, last_trackable_row):
     ws.freeze_panes = "A2"
     ws.column_dimensions["B"].hidden = True
 
@@ -88,8 +140,10 @@ def format_data_sheet(ws, n_data_rows):
     for col, width in widths.items():
         ws.column_dimensions[col].width = width
 
+    # Bounded to the trackable zone only — the Status dropdown shouldn't
+    # apply to the route-planner-only tail below ROUTE_PLANNER_MARKER.
     dv = DataValidation(type="list", formula1=f'"{STATUS_LIST}"', allow_blank=False)
-    dv.add(f"F2:F{n_data_rows}")
+    dv.add(f"F2:F{last_trackable_row}")
     ws.add_data_validation(dv)
 
 
@@ -100,8 +154,18 @@ def build_changelog(wb):
         cell.font = Font(bold=True)
 
 
-def build_dashboard(wb, wards):
+def build_dashboard(wb, wards, last_trackable_row):
     ws = wb.create_sheet("Dashboard")
+
+    # Every Data reference below is bounded to Data!...$2:...${last_trackable_row}
+    # rather than a full-column reference — a full column would also sweep
+    # in the route-planner-only rows below ROUTE_PLANNER_MARKER (all zero
+    # residences, but their Status cells still hold whatever value they had
+    # before being segregated) and silently skew these counts. This is the
+    # same class of bug the Dashboard range rewrite already fixed once for
+    # ward-count mismatches — see the module docstring.
+    def dref(letter):
+        return f"Data!${letter}$2:${letter}${last_trackable_row}"
 
     for c, header in enumerate(DASHBOARD_HEADERS, start=1):
         cell = ws.cell(row=1, column=c, value=header)
@@ -121,16 +185,16 @@ def build_dashboard(wb, wards):
     for i, (ward_name, _district) in enumerate(wards):
         r = first_row + i
         ws.cell(row=r, column=1, value=ward_name)
-        ws.cell(row=r, column=2, value=f"=COUNTIF(Data!$D:$D,A{r})")
-        ws.cell(row=r, column=3, value=f'=COUNTIFS(Data!$D:$D,A{r},Data!$F:$F,"Complete")')
-        ws.cell(row=r, column=4, value=f'=COUNTIFS(Data!$D:$D,A{r},Data!$F:$F,"In_Progress")')
-        ws.cell(row=r, column=5, value=f'=COUNTIFS(Data!$D:$D,A{r},Data!$F:$F,"Planned")')
-        ws.cell(row=r, column=6, value=f'=COUNTIFS(Data!$D:$D,A{r},Data!$F:$F,"Not_Started")')
+        ws.cell(row=r, column=2, value=f"=COUNTIF({dref('D')},A{r})")
+        ws.cell(row=r, column=3, value=f'=COUNTIFS({dref("D")},A{r},{dref("F")},"Complete")')
+        ws.cell(row=r, column=4, value=f'=COUNTIFS({dref("D")},A{r},{dref("F")},"In_Progress")')
+        ws.cell(row=r, column=5, value=f'=COUNTIFS({dref("D")},A{r},{dref("F")},"Planned")')
+        ws.cell(row=r, column=6, value=f'=COUNTIFS({dref("D")},A{r},{dref("F")},"Not_Started")')
         ws.cell(row=r, column=7, value=f"=IFERROR(C{r}/B{r},0)").number_format = "0.00%"
-        ws.cell(row=r, column=8, value=f"=IFERROR(SUMIF(Data!$D:$D,A{r},Data!$G:$G),0)")
+        ws.cell(row=r, column=8, value=f"=IFERROR(SUMIF({dref('D')},A{r},{dref('G')}),0)")
         ws.cell(row=r, column=9, value=(
-            f'=IFERROR(SUMIFS(Data!$G:$G,Data!$D:$D,A{r},Data!$F:$F,"Complete")'
-            f'+SUMIFS(Data!$G:$G,Data!$D:$D,A{r},Data!$F:$F,"In_Progress"),0)'
+            f'=IFERROR(SUMIFS({dref("G")},{dref("D")},A{r},{dref("F")},"Complete")'
+            f'+SUMIFS({dref("G")},{dref("D")},A{r},{dref("F")},"In_Progress"),0)'
         ))
         ws.cell(row=r, column=10, value=f"=IFERROR(I{r}/H{r},0)").number_format = "0.00%"
         # column 11 (Overseer) intentionally left blank — filled in manually per ward
@@ -178,7 +242,7 @@ def build_dashboard(wb, wards):
     kpi_defs = [
         ("Total Roads",                                  f"=B{overall_row}",                                  "#,##0"),
         ("Total Residences (estimate)",                  f"=H{overall_row}",                                  "#,##0"),
-        ("Residences Reached (Complete)",                 f'=SUMIFS(Data!$G:$G,Data!$F:$F,"Complete")',        "#,##0"),
+        ("Residences Reached (Complete)",                 f'=SUMIFS({dref("G")},{dref("F")},"Complete")',        "#,##0"),
         ("Residences Reached (incl. In Progress, 30% credit)",
          None,  # filled in below once its own row number is known (self-reference)
          "#,##0"),
@@ -206,7 +270,7 @@ def build_dashboard(wb, wards):
 
     ws.cell(row=reached_weighted_row, column=2, value=(
         f"=B{reached_complete_row}"
-        f'+0.3*SUMIFS(Data!$G:$G,Data!$F:$F,"In_Progress")'
+        f'+0.3*SUMIFS({dref("G")},{dref("F")},"In_Progress")'
     )).number_format = "#,##0"
     ws.cell(row=remaining_row, column=2, value=f"=B{total_residences_row}-B{reached_complete_row}").number_format = "#,##0"
     ws.cell(row=pct_reached_row, column=2, value=f"=IFERROR(B{reached_complete_row}/B{total_residences_row},0)").number_format = "0.00%"
@@ -263,11 +327,12 @@ def build_dashboard(wb, wards):
     return reached_complete_row
 
 
-def build_checksum(wb, reached_complete_row):
+def build_checksum(wb, reached_complete_row, last_trackable_row):
     ws = wb.create_sheet("Checksum")
+    rng = f"Data!F$2:F${last_trackable_row}"
     ws["A1"] = (
-        '=COUNTIF(Data!F:F,"Not_Started")&"|"&COUNTIF(Data!F:F,"Planned")&"|"'
-        '&COUNTIF(Data!F:F,"In_Progress")&"|"&COUNTIF(Data!F:F,"Complete")&"|"'
+        f'=COUNTIF({rng},"Not_Started")&"|"&COUNTIF({rng},"Planned")&"|"'
+        f'&COUNTIF({rng},"In_Progress")&"|"&COUNTIF({rng},"Complete")&"|"'
         f"&Dashboard!B{reached_complete_row}"
     )
 
@@ -285,18 +350,20 @@ def main():
 
     wb = load_workbook(EXCEL_INPUT)
     data_ws = wb["Data"]
+    last_trackable_row = partition_route_only_rows(data_ws)
     n_data_rows = data_ws.max_row
+    n_route_only_rows = n_data_rows - last_trackable_row - 1  # -1 for the marker row itself
 
-    format_data_sheet(data_ws, n_data_rows)
+    format_data_sheet(data_ws, last_trackable_row)
     build_changelog(wb)
-    reached_complete_row = build_dashboard(wb, cfg["wards"])
-    build_checksum(wb, reached_complete_row)
+    reached_complete_row = build_dashboard(wb, cfg["wards"], last_trackable_row)
+    build_checksum(wb, reached_complete_row, last_trackable_row)
     build_authorised(wb)
 
     wb.save(EXCEL_OUTPUT)
 
     print(f"Wrote {EXCEL_OUTPUT}")
-    print(f"  Data rows: {n_data_rows - 1:,}")
+    print(f"  Data rows: {n_data_rows - 1:,} (trackable: {last_trackable_row - 1:,}, route-planner-only: {n_route_only_rows:,})")
     print(f"  Wards on Dashboard: {len(cfg['wards'])}")
     print(f"  Authorised emails: {cfg.get('authorised_emails') or '(none set)'}")
     print("\nSheets: Data, Changelog, Dashboard, Checksum, Authorised")
