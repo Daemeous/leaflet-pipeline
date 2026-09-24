@@ -317,7 +317,11 @@ branches together rather than working strictly top-to-bottom:
 - **The two steps that need a human click** (the exec-URL authorize hit,
   and "Publish to web" below) are both short and don't block anything else
   you can do yourself — ask for them and keep working on whatever doesn't
-  depend on the result while you wait, rather than idling.
+  depend on the result while you wait, rather than idling. **Give both URLs
+  as clickable markdown links in your own message text before asking the
+  confirmation question** — don't bury a raw URL inside the question text
+  itself (found 2026-09-24: a URL embedded in an AskUserQuestion prompt
+  isn't reliably clickable in every UI this runs in).
 - The two genuinely manual steps themselves are NOT parallel with each
   other in one sense worth flagging: "Publish to web" needs the Sheet to
   already exist (obviously), and the exec-URL authorize click needs a
@@ -397,7 +401,9 @@ branches together rather than working strictly top-to-bottom:
 ### Repo architecture — read before creating a new repo
 
 - **Leaflet Map family**: one GitHub repo per constituency (`leaflet-map`,
-  `south-hams`, `burton-uttoxeter`, `stone`, `barnsley`, `sthelens`, plus
+  `south-hams`, `burton-uttoxeter`, `stone`, `barnsley`, `sthelens`,
+  `shipley`, `bassetlaw`, `east-grinstead-uckfield`,
+  `dunstable-leighton-buzzard`, `stockton-north-west`, plus
   `leaflet-map-demo`), all under `Daemeous`, each with GitHub Pages enabled
   serving from `main`/`/`. **Only `leaflet-map` carries the real
   `core.js`/`styles.css`** — every other repo's `index.html` loads them
@@ -650,9 +656,10 @@ whatever `shared_v` `leaflet-map`'s own live `index.html` currently
 references — check it, don't assume `1`. **Whenever `core.js` or
 `styles.css` changes in `leaflet-map`, bump `?shared_v=N` in every
 consuming repo's `index.html`** (`south-hams`, `burton-uttoxeter`, `stone`,
-`barnsley`, `sthelens`, `leaflet-map-demo`, and any new one) and push each
-— `leaflet-map`'s own local `?v=N` on its same-origin tags is a separate
-counter and doesn't need to match.
+`barnsley`, `sthelens`, `shipley`, `bassetlaw`, `east-grinstead-uckfield`,
+`dunstable-leighton-buzzard`, `stockton-north-west`, `leaflet-map-demo`,
+and any new one) and push each — `leaflet-map`'s own local `?v=N` on its
+same-origin tags is a separate counter and doesn't need to match.
 
 ### Updating the central deployments list
 
@@ -663,13 +670,33 @@ repo, not just writing a README for the new one** — there's no single
 central file that lists them; the list is intentionally duplicated
 everywhere for discoverability. As of this writing that's `leaflet-map`,
 `leaflet-map-demo`, `south-hams`, `burton-uttoxeter`, `stone`, `barnsley`,
-`sthelens`, `stafford-potholes`, plus `leaflet-pipeline`'s own README.
+`sthelens`, `shipley`, `bassetlaw`, `east-grinstead-uckfield`,
+`dunstable-leighton-buzzard`, `stockton-north-west`, `stafford-potholes`,
+plus `leaflet-pipeline`'s own README.
 **Always fetch the CURRENT live table from `leaflet-map`'s own README
 before copying it elsewhere** (`gh api repos/Daemeous/leaflet-map/contents/README.md
 --jq '.content' | base64 -d`) rather than trusting this file's own list as
 current — it's a point-in-time snapshot and has been observed to lag
 behind what's actually live (e.g. it didn't mention `route-planner` or
-`deployments.json` below until this edit).
+`deployments.json` below until this edit). **Also watch for a self-
+reference false match**: a script that finds "where does the deployments
+table end" by searching each README for the most-recently-added sibling's
+slug can match that slug inside the CURRENT repo's own `Live:` self-link
+line instead of inside the actual table (hit 2026-09-24 building Stockton
+North & West — `dunstable-leighton-buzzard`'s own README self-references
+that slug outside the table) — verify the insertion actually landed inside
+the markdown table, not just that some line contained the search string.
+
+**`route-planner` does NOT currently read `deployments.json`** despite the
+line above and the note in `leaflet-map/deployments.json`'s own
+`_comment` field claiming otherwise — checked its actual source
+2026-09-24 (`js/*.js`, `index.html`) and found no reference to
+`deployments.json` or a "pick your area" dropdown anywhere; it currently
+works by pasting a tracker site's URL directly (see `js/tracker.js`),
+not by picking from a registry. Keep adding new deployments to
+`deployments.json` anyway (harmless, and ready for whenever that dropdown
+actually gets built), but don't claim to a user that doing so updates
+route-planner's UI — it doesn't yet.
 
 There's also **`leaflet-map/deployments.json`** — a machine-readable
 registry read by [route-planner](https://github.com/Daemeous/route-planner)
