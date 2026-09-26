@@ -19,6 +19,7 @@ Leaflets/
                         constituency_config.py    (fill in)
                         run_pipeline.py            (run unchanged)
                         fill_gaps.py               (run unchanged — optional but recommended)
+                        split_home_gaps.py          (run unchanged — optional but recommended)
                         estimate_residences_uprn.py (run unchanged)
                         add_unnamed_roads.py       (run unchanged — optional but recommended)
                         build_tracker.py           (run unchanged)
@@ -156,7 +157,40 @@ Leaflets/
    spotting where real streets are missing, worth a caveat if the exact
    totals matter downstream.
 
-9. **Sanity-check the output** before sending it — this costs one query and
+9. **Split out long homeless stretches** (optional but recommended, same
+   status as `fill_gaps.py`): `python split_home_gaps.py`. Long rural/
+   village roads often have their homes bunched together with a long empty
+   stretch between or around them (two ends of a village strung along one
+   road, or a road that runs past open fields before reaching houses) —
+   without this, the whole physical road is one trackable unit, so marking
+   one populated end Complete silently also claims credit for an unvisited
+   populated end further down the same road. Reuses the same tuned
+   constants as route-planner's own `trimToHomes()` (`leaflet-routes/js/
+   graph.js` — 250m gap, 30m margin, only trims if it'd drop 15%+ of the
+   road's length) so "empty" means the same thing in both apps, but for a
+   different purpose: route-planner trims at routing time and drops the
+   empty bits; this splits the **Data sheet itself** at build time, so
+   each home cluster gets its own trackable row, and the empty stretches
+   are kept (not dropped) as `Residences = 0` rows named
+   `"<Street> [gap]"`. A road with 2+ clusters becomes `"<Street> (Part
+   1)"`, `"(Part 2)"`, ... with residences split proportionally; a
+   single-cluster road just keeps its name, trimmed to the populated
+   stretch. Rewrites `<prefix>_Leafletting_residences_uprn.xlsx` in place —
+   run it after `add_unnamed_roads.py` (so "Unknown Road" cluster rows are
+   left alone) and before `build_tracker.py`. No change was needed in
+   `build_tracker.py` itself: `partition_route_only_rows()` already pushes
+   any `Residences == 0` row — including these new gap rows — below
+   `ROUTE_PLANNER_MARKER`, and every Dashboard/Checksum range is already
+   bounded to stop above it. `core.js` renders `"[gap]"`-suffixed rows grey
+   (`GAP_COLOUR`) under the existing route-only toggle, distinct from hot
+   pink for genuinely all-empty roads (bridges/farm tracks) — see
+   `isGapRoad()` near the top of the IIFE. Like the other steps that write
+   `_Leafletting_residences_uprn.xlsx`, this changes row identity for every
+   road it touches (row count, and split roads' Street names) — only safe
+   on a fresh build, not a refresh with live tracked progress, without the
+   usual `finalize_output.py` merge care.
+
+10. **Sanity-check the output** before sending it — this costs one query and
    catches the entire class of "silently ran, silently wrong" failures:
    ```python
    import pandas as pd
@@ -194,7 +228,7 @@ Leaflets/
    one that matches the pattern of similar areas isn't a bug just because
    it's far from the naive electorate/1.5–2 range.
 
-10. **Build the Google-Sheets-ready tracker**: `python build_tracker.py`.
+11. **Build the Google-Sheets-ready tracker**: `python build_tracker.py`.
    Takes `<prefix>_Leafletting_residences_uprn.xlsx` and writes
    `<prefix>_Tracker.xlsx` with the full sheet set a hosted tracker needs:
    - `Data` — the same road/ward/residence rows, plus the finishing touches
@@ -223,11 +257,11 @@ Leaflets/
    bound stayed hard-coded to the old sheet's size and silently summed the
    wrong rows). Always regenerate via `build_tracker.py` instead.
 
-11. **Deliver the file** and mention which method was used (UPRN-buffer) and
+12. **Deliver the file** and mention which method was used (UPRN-buffer) and
    the total residence count, so whoever's checking it has a number to
    sanity-check against their own knowledge of the area.
 
-12. **Deploy it.** Publishing (GitHub repo + Google Sheet + Apps Script, see
+13. **Deploy it.** Publishing (GitHub repo + Google Sheet + Apps Script, see
    "Publishing a deployment" below) is part of the default pipeline for a
    new constituency, not a separate opt-in step — do it right after
    delivering the spreadsheet unless the user says they just want the file
@@ -236,7 +270,7 @@ Leaflets/
 
 ## Route-planner-only roads (zero-residence roads)
 
-`build_tracker.py` (step 10) segregates roads with `Residences == 0`
+`build_tracker.py` (step 11) segregates roads with `Residences == 0`
 (bridges, bypasses, farm tracks, connector roads — kept in the Data sheet at
 all only because route-planner needs them to route through) rather than
 mixing them into the leafletting tracker or dropping them. It moves them
@@ -256,9 +290,16 @@ string — it's duplicated in three places, all kept in sync:
   a real `_rowIdx` (can't be edited). A sheet with no marker row (every
   deployment built before this existed) behaves exactly as before —
   everything is treated as trackable. An authorised-editor-only sidebar
-  toggle ("🩷 Route-only roads") renders them on the map in hot pink
-  (`#ff1493`) as a separate, non-interactive, non-editable layer — purely a
-  spot-checking aid, not part of the tracked dataset.
+  toggle ("🩷 Route-only roads") renders them on the map as a separate,
+  non-interactive, non-editable layer — purely a spot-checking aid, not
+  part of the tracked dataset. Two subtypes render in different colours,
+  distinguished by `isGapRoad()` checking for a `" [gap]"` Street suffix
+  (`GAP_SUFFIX`): genuinely all-empty roads (bridges, farm tracks — never
+  had homes) are hot pink (`ROUTE_ONLY_COLOUR`, `#ff1493`); stretches
+  trimmed out of an otherwise-populated road by `split_home_gaps.py` (step
+  9, below) are grey (`GAP_COLOUR`, `#888888`) — same non-trackable
+  treatment, but a visually distinct "recorded as empty, not just missing"
+  signal for the second case.
 - `leaflet-pipeline/apps-script/leaflet-map.gs.txt` — `getLastTrackableRow()`
   bounds every Data write path (`handleUpdate`/`handlePartial`/
   `handlePropose`) to reject a row at or below the marker, so a
@@ -289,9 +330,11 @@ real missing roads and badly wrong residence counts every time it's been
 tried so far. To refresh one:
 
 1. Copy the fixed `run_pipeline.py`, `fill_gaps.py`, `estimate_residences_uprn.py`,
-   and `add_unnamed_roads.py` into the constituency's folder if they predate
-   the fix (check for `from collections import defaultdict` near the top of
-   `run_pipeline.py` — if it's missing, the file is a pre-fix copy).
+   `add_unnamed_roads.py`, and `split_home_gaps.py` into the constituency's
+   folder if they predate the fix (check for `from collections import
+   defaultdict` near the top of `run_pipeline.py` — if it's missing, the
+   file is a pre-fix copy; `split_home_gaps.py` simply won't exist yet in
+   an older folder).
    `constituency_config.py` doesn't need touching unless it's missing
    `boundary_line_file_name` (an older field added partway through the
    project — add it if absent, using the `File_Name` from step 2).
@@ -299,9 +342,9 @@ tried so far. To refresh one:
    fetch (picks up OSM edits since the last fetch) — otherwise `run_pipeline.py`
    reuses the cached one and just re-runs the (now-fixed) clipping logic,
    which is much faster and still gets the clustering fix.
-3. Run steps 5–8 as above (`run_pipeline.py` → `fill_gaps.py` → copy
+3. Run steps 5–9 as above (`run_pipeline.py` → `fill_gaps.py` → copy
    gapfilled over `_Leafletting.xlsx` → `estimate_residences_uprn.py` →
-   `add_unnamed_roads.py`).
+   `add_unnamed_roads.py` → `split_home_gaps.py`).
 4. **Before overwriting anything real**: check whether the constituency has
    actual tracked progress (`Status` not 100% `Not_Started` in whatever the
    live/reference sheet is). If it does, do NOT run `estimate_residences_uprn.py`
@@ -329,7 +372,7 @@ have all been refreshed with the fixed pipeline.
 
 ## Publishing a deployment (GitHub repo + Google Sheet + Apps Script)
 
-Building the spreadsheet (steps 1–11 above) is only half of shipping a new
+Building the spreadsheet (steps 1–12 above) is only half of shipping a new
 area — this section covers the other half: turning that into a live,
 publicly-reachable site with its own Google Sheet backend and Apps Script
 API, and keeping every repo's "Live deployments" list in sync when you do.
@@ -803,7 +846,7 @@ for the heavier one when the lighter one already covers it:
   `westminster_const_name`, sanity-checking the residence total against a
   comparable constituency) that would otherwise force one agent to keep
   context-switching between unrelated areas. In that case, spawn one Agent
-  per constituency to run steps 1–11 (config through tracker) independently
+  per constituency to run steps 1–12 (config through tracker) independently
   and report back, rather than working them round-robin yourself. Don't
   bother for a single constituency, and don't bother for the
   deployment/publishing stage alone (step 12 on its own) — that's almost
@@ -862,8 +905,11 @@ Sheet with no shared state.
   Lane" recurs as several unconnected physical roads across a rural
   constituency; grouping by name string alone before computing ward ratios
   silently drops or misattributes them — fixed by clustering each name's
-  OSM ways by shared node IDs first), and the gap-fill/unnamed-road
-  handling in `fill_gaps.py` + `add_unnamed_roads.py`. Copy `template/`
+  OSM ways by shared node IDs first), the gap-fill/unnamed-road
+  handling in `fill_gaps.py` + `add_unnamed_roads.py`, and the
+  homeless-stretch splitting in `split_home_gaps.py` (reuses route-planner's
+  already-tuned `trimToHomes()` constants — don't invent a different gap
+  threshold for the tracker). Copy `template/`
   rather than reconstructing pipeline logic from first principles or from
   an older constituency folder.
 - `build_tracker.py` (step 10) is cheap/fast — no need to background it.
