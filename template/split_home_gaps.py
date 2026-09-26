@@ -275,6 +275,15 @@ def main():
     print("Step 1: Loading roads...")
     df = pd.read_excel(TARGET_XLSX, sheet_name="Data")
     df = df[df["Street"] != ROUTE_PLANNER_MARKER].reset_index(drop=True)
+    # Residences arrives as a real int from a pipeline-native xlsx, but as a
+    # string if this file was built by round-tripping a published Sheet CSV
+    # through pandas (any non-numeric value anywhere in the column, e.g. a
+    # stray "-" placeholder, makes pandas infer the whole column as object
+    # dtype) -- found running this against the leaflet-map-demo Sheet's live
+    # export: every row silently skipped (0 splits, no error) because the
+    # old `isinstance(residences, (int, float))` check is False for a
+    # string "45". Coerce explicitly instead of trusting the inferred dtype.
+    df["Residences"] = pd.to_numeric(df["Residences"], errors="coerce").fillna(0)
 
     print("Step 2: Loading constituency boundary & filtering UPRNs...")
     boundary = gpd.read_file(CONSTITUENCY_GEOJSON)
@@ -335,7 +344,7 @@ def main():
     for i, row in df.iterrows():
         frags4326 = frag_lists_4326[i]
         residences = row.get("Residences")
-        if not frags4326 or not isinstance(residences, (int, float)) or residences <= 0:
+        if not frags4326 or residences <= 0:
             out_rows.append(row.to_dict())
             continue
         pts = road_points.get(i, [])
