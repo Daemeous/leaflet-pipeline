@@ -67,6 +67,7 @@ function doPost(e) {
 	 	 if (body.action === "verify") 	return handleVerify(body);
 	 	 if (body.action === "update") 	return handleUpdate(body);
 	 	 if (body.action === "partial") return handlePartial(body);
+	 	 if (body.action === "markStretch") return handleMarkStretch(body);
 	 	 if (body.action === "revert") 	return handleRevert(body);
 	 	 if (body.action === "history") return handleHistory(body);
 	 	 if (body.action === "propose") return handlePropose(body);
@@ -131,6 +132,115 @@ function handlePartial(body) {
 	 logChange(sheet, row, "partial_geometry", prevPg, pg, email, false);
 
 	 return jsonResp({ ok: true });
+}
+
+// ?? Mark a stretch of a road done (route-planner's walking directions) ???????
+// Adds and/or removes partial_geometry tokens ("seg<n>:<from>-<to>:<B|S|F>")
+// against the row's CURRENT value, under a lock, then sets Status to match:
+// In_Progress while any stretch is recorded, Complete once every fragment is
+// covered on both sides (or when the caller says its route has now done the
+// whole row, body.complete), and back to Not_Started if unticking removes the
+// last stretch. Unlike "partial" (which replaces the whole value with what
+// the client sends), two people ticking different stretches of the same road
+// can't overwrite each other's work.
+const STRETCH_TOKEN_RE = /^seg(\d+):([\d.]+)-([\d.]+):([BSF])$/;
+const STRETCH_MIN_M = 10; // same tolerance as route-planner's graph.js
+
+function handleMarkStretch(body) {
+  const email = getVerifiedEmail(body);
+  if (!email)               return jsonResp({ ok: false, error: "Invalid or expired token" });
+  if (!isAuthorised(email)) return jsonResp({ ok: false, error: "Not authorised" });
+
+  const row = parseInt(body.rowIndex, 10);
+  if (isNaN(row) || row < 2) return jsonResp({ ok: false, error: "Invalid row index" });
+  const add = Array.isArray(body.add) ? body.add.map(String) : [];
+  const remove = Array.isArray(body.remove) ? body.remove.map(String) : [];
+  if (add.concat(remove).some(t => !STRETCH_TOKEN_RE.test(t))) return jsonResp({ ok: false, error: "Invalid stretch" });
+
+  const lock = LockService.getScriptLock();
+  lock.waitLock(20000);
+  try {
+    const sheet = getDataSheet();
+    if (row > getLastTrackableRow(sheet)) return jsonResp({ ok: false, error: "Row out of range" });
+    const prevStatus = String(sheet.getRange(row, STATUS_COL).getValue());
+    const prevPg = String(sheet.getRange(row, PARTIAL_COL).getValue() || "-");
+
+    const norm = t => {
+      const m = t.match(STRETCH_TOKEN_RE);
+      return m ? `seg${parseInt(m[1], 10)}:${parseFloat(m[2]).toFixed(4)}-${parseFloat(m[3]).toFixed(4)}:${m[4]}` : t;
+    };
+    const drop = new Set(remove.map(norm));
+    const tokens = (prevPg === "-" ? [] : prevPg.split("|").filter(Boolean)).filter(t => !drop.has(norm(t)));
+    add.map(norm).forEach(t => { if (!tokens.some(x => norm(x) === t)) tokens.push(t); });
+    const pg = tokens.length ? tokens.join("|") : "-";
+
+    let status = prevStatus;
+    if (tokens.length && (body.complete === true || stretchesCoverRow(sheet, row, tokens))) status = "Complete";
+    else if (tokens.length) { if (!(prevStatus === "Complete" && !remove.length)) status = "In_Progress"; }
+    else if (remove.length && (prevStatus === "In_Progress" || prevStatus === "Complete")) status = "Not_Started";
+
+    if (pg !== prevPg) {
+      sheet.getRange(row, PARTIAL_COL).setValue(pg);
+      logChange(sheet, row, "partial_geometry", prevPg, pg, email, false);
+    }
+    if (status !== prevStatus) {
+      sheet.getRange(row, STATUS_COL).setValue(status);
+      logChange(sheet, row, "status", prevStatus, status, email, false);
+    }
+    return jsonResp({ ok: true, status, partialGeometry: pg });
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+// True when every fragment of the row's road_geometry (bar slivers under
+// STRETCH_MIN_M) is done on both sides: B stretches, plus wherever an S and
+// an F overlap. Gaps and loose ends under STRETCH_MIN_M count as done, as a
+// tapped or GPS-drawn stretch never lines up exactly.
+function stretchesCoverRow(sheet, row, tokens) {
+  const headers = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0].map(h => String(h).trim().toLowerCase());
+  const geomCol = headers.indexOf("road_geometry") + 1;
+  if (!geomCol) return false;
+  const frags = String(sheet.getRange(row, geomCol).getValue()).split("|").map(part => {
+    const m = part.match(/LINESTRING\s*\((.*)\)/i);
+    return m ? m[1].split(",").map(p => p.trim().split(/\s+/).map(Number)) : [];
+  });
+  const sides = frags.map(() => ({ B: [], S: [], F: [] }));
+  tokens.forEach(t => {
+    const m = t.match(STRETCH_TOKEN_RE);
+    if (!m || !sides[+m[1]]) return;
+    const a = parseFloat(m[2]), b = parseFloat(m[3]);
+    sides[+m[1]][m[4]].push([Math.min(a, b), Math.max(a, b)]);
+  });
+  return frags.every((pts, i) => {
+    const len = lineLengthM(pts);
+    if (len < STRETCH_MIN_M) return true;
+    const tol = STRETCH_MIN_M / len;
+    const s = mergeRanges(sides[i].S, tol), f = mergeRanges(sides[i].F, tol);
+    const both = [];
+    s.forEach(([a, b]) => f.forEach(([c, d]) => { if (Math.min(b, d) > Math.max(a, c)) both.push([Math.max(a, c), Math.min(b, d)]); }));
+    const done = mergeRanges(sides[i].B.concat(both), tol);
+    return done.length === 1 && done[0][0] <= tol && done[0][1] >= 1 - tol;
+  });
+}
+
+function mergeRanges(list, tol) {
+  const out = [];
+  list.slice().sort((x, y) => x[0] - y[0]).forEach(([a, b]) => {
+    if (out.length && a - out[out.length - 1][1] < tol) out[out.length - 1][1] = Math.max(out[out.length - 1][1], b);
+    else out.push([a, b]);
+  });
+  return out;
+}
+
+function lineLengthM(pts) {
+  let len = 0;
+  for (let i = 1; i < pts.length; i++) {
+    const [lon1, lat1] = pts[i - 1], [lon2, lat2] = pts[i];
+    const kx = 111320 * Math.cos((lat1 + lat2) / 2 * Math.PI / 180);
+    len += Math.hypot((lon2 - lon1) * kx, (lat2 - lat1) * 110540);
+  }
+  return len;
 }
 
 // ?? Revert (sitewide purge of one editor's standing changes) ??????????????????
