@@ -24,6 +24,7 @@ The setup/build tooling behind the [leaflet-map](https://github.com/Daemeous/lea
 | East Grinstead and Uckfield | https://daemeous.github.io/east-grinstead-uckfield/ |
 | Dunstable and Leighton Buzzard | https://daemeous.github.io/dunstable-leighton-buzzard/ |
 | Stockton North & West | https://daemeous.github.io/stockton-north-west/ |
+| Staffordshire Moorlands | https://daemeous.github.io/staffordshire-moorlands/ |
 
 **Pothole Watch:**
 
