@@ -67,6 +67,7 @@ from run_pipeline import (
     _geometry_to_text,
     _representative_latlon,
     _is_boundary_artefact,
+    is_numbered_footpath,
     DOMINANT_WARD_THRESHOLD,
     MIN_FRAGMENT_RATIO,
     BOUNDARY_ROAD_SECONDARY_MAX,
@@ -137,7 +138,8 @@ def main():
     elements = [e for e in osm["elements"] if e.get("type") == "way"]
     print(f"{len(elements):,} ways total")
 
-    named_elements   = [e for e in elements if e.get("tags", {}).get("name", "").strip()]
+    named_elements   = [e for e in elements if e.get("tags", {}).get("name", "").strip()
+                        and not is_numbered_footpath(e["tags"])]
     unnamed_elements = [e for e in elements if not e.get("tags", {}).get("name", "").strip()]
     print(f"  {len(named_elements):,} named, {len(unnamed_elements):,} unnamed")
 

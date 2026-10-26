@@ -609,7 +609,20 @@ print(resp.json())  # {"id": "...", "mimeType": "application/vnd.google-apps.spr
 The response `id` is the Sheet's file ID, same as what you'd read out of
 the URL after a manual conversion. (One flaky 403 was seen on a first
 attempt with no retry logic and no clear cause — worth a single retry
-before assuming something's actually wrong.)
+before assuming something's actually wrong. A 401 means rclone's cached
+access token has expired — run any `rclone` command against `gdrive:`,
+e.g. `rclone about gdrive:`, to refresh it, then re-read the config.)
+
+**Rebuilding a deployed Sheet that has no tracked progress yet**: PATCH
+the new xlsx onto the SAME file ID
+(`PATCH https://www.googleapis.com/upload/drive/v3/files/<id>?uploadType=media`,
+xlsx Content-Type, same rclone token) — Drive re-converts it in place, so
+the bound Apps Script, its deployment and its authorisation all survive.
+What does NOT survive: every tab gets a new gid, and "Publish to web" has
+to be redone for the new Data/Checksum tabs (the `2PACX-…` ID may or may
+not change — take it from the new publish links). Get the new gids from
+`sheetInfo`. (The Sheets API isn't an option for editing tabs in place:
+it's disabled on rclone's shared Cloud project — confirmed 2026-10-26.)
 
 **Step 2 — bind an Apps Script project to that EXISTING file.** Do **not**
 pass `--type sheets` here — that tells the Apps Script API to create a
@@ -923,7 +936,11 @@ Sheet with no shared state.
   handling in `fill_gaps.py` + `add_unnamed_roads.py`, and the
   homeless-stretch splitting in `split_home_gaps.py` (reuses route-planner's
   already-tuned `trimToHomes()` constants — don't invent a different gap
-  threshold for the tracker). Copy `template/`
+  threshold for the tracker), and the numbered-footpath filter
+  (`is_numbered_footpath()` in `run_pipeline.py`, also used by
+  `fill_gaps.py` — some areas' OSM mappers put a right-of-way number like
+  "Cheddleton 46" in a footpath's `name`, which pulled 892 field paths into
+  Staffordshire Moorlands' tracker as if they were streets). Copy `template/`
   rather than reconstructing pipeline logic from first principles or from
   an older constituency folder.
 - `build_tracker.py` (step 10) is cheap/fast — no need to background it.

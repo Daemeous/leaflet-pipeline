@@ -26,6 +26,7 @@ Usage
 """
 
 import json
+import re
 import sys
 import time
 from collections import defaultdict
@@ -59,12 +60,33 @@ MIN_FRAGMENT_RATIO = 0.02
 BOUNDARY_ROAD_SECONDARY_MAX = 0.15
 BOUNDARY_ROAD_TOLERANCE     = 0.0003
 
+# Some OSM mappers (found 2026-10-26, Staffordshire Moorlands — 1,000+ ways)
+# put a public right of way's number in `name` ("Cheddleton 46", "Leek Town
+# 6"), so `way[highway][name]` pulls in miles of field footpaths as if they
+# were streets. Dropped only for non-vehicular highway types: a service/
+# unclassified way carrying a footpath number is usually a farm drive that
+# does lead to homes, so it's kept.
+FOOTPATH_NUMBER_NAME = re.compile(r"[A-Z][A-Za-z'&\- ]* \d+[A-Za-z]?")
+NON_VEHICULAR_TYPES  = {"path", "footway", "track", "steps", "bridleway", "cycleway", "pedestrian"}
+
 # ══════════════════════════════════════════════════════════════════════════════
 #  Helpers
 # ══════════════════════════════════════════════════════════════════════════════
 
 def _norm_name(name: str) -> str:
     return name.strip().lower()
+
+
+def is_numbered_footpath(tags: dict) -> bool:
+    """True for a non-vehicular way named after its right-of-way number
+    (see FOOTPATH_NUMBER_NAME) — never for "Court No. 1"-style real
+    addresses."""
+    name = tags.get("name", "").strip()
+    return (
+        tags.get("highway") in NON_VEHICULAR_TYPES
+        and FOOTPATH_NUMBER_NAME.fullmatch(name) is not None
+        and not re.search(r"\b(No|Number)\b", name)
+    )
 
 
 def _geometry_to_text(geom) -> str:
@@ -372,11 +394,15 @@ def step4_build_spreadsheet(cfg, wards_gdf, district_map):
     # that same-named-but-physically-disconnected roads can be told apart
     # below — see the clustering step.
     raw_roads: dict[str, list[tuple[tuple, list]]] = {}
+    n_footpaths = 0
     for el in elements:
         if el.get("type") != "way":
             continue
         name = el.get("tags", {}).get("name")
         if not name:
+            continue
+        if is_numbered_footpath(el["tags"]):
+            n_footpaths += 1
             continue
         pts = el.get("geometry", [])
         coords = [(p["lon"], p["lat"]) for p in pts]
@@ -388,6 +414,7 @@ def step4_build_spreadsheet(cfg, wards_gdf, district_map):
     import gc
     gc.collect()
 
+    print(f"  Skipped {n_footpaths:,} footpath(s) named by right-of-way number")
     print(f"  Grouped into {len(raw_roads):,} road names")
 
     # ── Cluster each name's ways into connected components (shared node IDs)
