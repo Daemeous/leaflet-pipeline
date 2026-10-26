@@ -31,8 +31,12 @@ Adds four sheets around the existing Data sheet:
 Also finishes formatting the Data sheet: freezes the header row, hides the
 @lat column (kept for an Apps Script map-link formula, not for manual
 reading — matches the reference file), and adds the Status dropdown
-(Not_Started / Planned / In_Progress / Complete) the Apps Script and
-colour-coding both rely on.
+(Not_Started / Planned / In_Progress / Complete / Inactive) the Apps Script
+and colour-coding both rely on. Roads in any ward listed in the config's
+optional `inactive_wards` get Status "Inactive" (grey on the map, needs
+ENABLE_INACTIVE in index.html) and are left out of the Dashboard's Streets/
+Residences totals, so out-of-scope wards kept in the sheet for later don't
+drag the campaign's percentages down.
 
 New in this Dashboard vs. the reference file (useful additions, not just a
 faithful copy):
@@ -66,7 +70,7 @@ _prefix = cfg["output_prefix"]
 EXCEL_INPUT  = f"{_prefix}_Leafletting_residences_uprn.xlsx"
 EXCEL_OUTPUT = f"{_prefix}_Tracker.xlsx"
 
-STATUS_LIST = "Not_Started,Planned,In_Progress,Complete"
+STATUS_LIST = "Not_Started,Planned,In_Progress,Complete,Inactive"
 
 # A single sentinel row dividing the Data sheet into two zones: real
 # leafletable roads above (Residences > 0) and, below this row, roads with
@@ -132,6 +136,33 @@ def partition_route_only_rows(ws):
     return last_trackable_row
 
 
+def _norm_ward(name):
+    name = str(name or "").strip()
+    return name[:-5].strip().lower() if name.lower().endswith(" ward") else name.lower()
+
+
+def mark_inactive_wards(ws, last_trackable_row):
+    """Set Status = "Inactive" on every trackable row whose Ward is in the
+    config's `inactive_wards`. Returns the number of rows changed."""
+    inactive = {_norm_ward(w) for w in (cfg.get("inactive_wards") or [])}
+    if not inactive:
+        return 0
+    headers = [c.value for c in ws[1]]
+    ward_col = headers.index("Ward") + 1
+    status_col = headers.index("Status") + 1
+    seen, n = set(), 0
+    for r in range(2, last_trackable_row + 1):
+        w = _norm_ward(ws.cell(row=r, column=ward_col).value)
+        if w in inactive:
+            ws.cell(row=r, column=status_col, value="Inactive")
+            seen.add(w)
+            n += 1
+    missing = inactive - seen
+    if missing:
+        raise SystemExit(f"ERROR: inactive_wards not found in Data: {sorted(missing)}")
+    return n
+
+
 def format_data_sheet(ws, last_trackable_row):
     ws.freeze_panes = "A2"
     ws.column_dimensions["B"].hidden = True
@@ -185,13 +216,15 @@ def build_dashboard(wb, wards, last_trackable_row):
     for i, (ward_name, _district) in enumerate(wards):
         r = first_row + i
         ws.cell(row=r, column=1, value=ward_name)
-        ws.cell(row=r, column=2, value=f"=COUNTIF({dref('D')},A{r})")
+        # Streets/Residences exclude Inactive roads (see mark_inactive_wards)
+        # — identical to a plain COUNTIF/SUMIF on a sheet that has none.
+        ws.cell(row=r, column=2, value=f'=COUNTIFS({dref("D")},A{r},{dref("F")},"<>Inactive")')
         ws.cell(row=r, column=3, value=f'=COUNTIFS({dref("D")},A{r},{dref("F")},"Complete")')
         ws.cell(row=r, column=4, value=f'=COUNTIFS({dref("D")},A{r},{dref("F")},"In_Progress")')
         ws.cell(row=r, column=5, value=f'=COUNTIFS({dref("D")},A{r},{dref("F")},"Planned")')
         ws.cell(row=r, column=6, value=f'=COUNTIFS({dref("D")},A{r},{dref("F")},"Not_Started")')
         ws.cell(row=r, column=7, value=f"=IFERROR(C{r}/B{r},0)").number_format = "0.00%"
-        ws.cell(row=r, column=8, value=f"=IFERROR(SUMIF({dref('D')},A{r},{dref('G')}),0)")
+        ws.cell(row=r, column=8, value=f'=IFERROR(SUMIFS({dref("G")},{dref("D")},A{r},{dref("F")},"<>Inactive"),0)')
         ws.cell(row=r, column=9, value=(
             f'=IFERROR(SUMIFS({dref("G")},{dref("D")},A{r},{dref("F")},"Complete")'
             f'+SUMIFS({dref("G")},{dref("D")},A{r},{dref("F")},"In_Progress"),0)'
@@ -249,7 +282,8 @@ def build_dashboard(wb, wards, last_trackable_row):
         ("Residences Remaining",                          None, "#,##0"),
         ("% Residences Reached (Complete only)",          None, "0.00%"),
         ("Wards Fully Complete (100% of roads)",          f"=COUNTIF(G{first_row}:G{last_ward_row},1)",        "#,##0"),
-        ("Wards Not Yet Started (0% of roads)",           f"=COUNTIF(G{first_row}:G{last_ward_row},0)",        "#,##0"),
+        ("Wards Not Yet Started (0% of roads)",           f"=COUNTIFS(G{first_row}:G{last_ward_row},0,B{first_row}:B{last_ward_row},\">0\")", "#,##0"),
+        ("Inactive Roads (excluded from totals)",         f'=COUNTIF({dref("F")},"Inactive")',                 "#,##0"),
     ]
 
     row = kpi_title_row + 1
@@ -351,6 +385,7 @@ def main():
     wb = load_workbook(EXCEL_INPUT)
     data_ws = wb["Data"]
     last_trackable_row = partition_route_only_rows(data_ws)
+    n_inactive = mark_inactive_wards(data_ws, last_trackable_row)
     n_data_rows = data_ws.max_row
     n_route_only_rows = n_data_rows - last_trackable_row - 1  # -1 for the marker row itself
 
@@ -365,6 +400,8 @@ def main():
     print(f"Wrote {EXCEL_OUTPUT}")
     print(f"  Data rows: {n_data_rows - 1:,} (trackable: {last_trackable_row - 1:,}, route-planner-only: {n_route_only_rows:,})")
     print(f"  Wards on Dashboard: {len(cfg['wards'])}")
+    if n_inactive:
+        print(f"  Inactive roads: {n_inactive:,} (wards: {', '.join(cfg['inactive_wards'])})")
     print(f"  Authorised emails: {cfg.get('authorised_emails') or '(none set)'}")
     print("\nSheets: Data, Changelog, Dashboard, Checksum, Authorised")
     print("Ready to upload to Google Sheets.")

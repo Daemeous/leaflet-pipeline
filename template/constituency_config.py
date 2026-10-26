@@ -72,6 +72,14 @@ authorised_emails
     host the result as a Google Sheet. List of email addresses that go on
     the Authorised sheet (accounts allowed to bypass the bound Apps Script's
     edit locks). Leave as [] if there's no Apps Script for this one yet.
+
+inactive_wards
+    Optional, used only by build_tracker.py. Wards to keep in the sheet but
+    mark out of scope for now (e.g. a council-area build where some wards
+    sit in a different constituency) — every road in them gets Status
+    "Inactive", shown grey on the map (set ENABLE_INACTIVE: true in the
+    deployment's index.html) and left out of the Dashboard's totals. Use
+    the same names as `wards`. Leave as [] normally.
 """
 
 ACTIVE_CONSTITUENCY = "REPLACE_ME"
@@ -98,6 +106,8 @@ CONSTITUENCIES = {
         "westminster_const_name": None,  # e.g. "East Grinstead and Uckfield Co Const"
 
         "authorised_emails": [],
+
+        "inactive_wards": [],
     },
 }
 

@@ -90,6 +90,15 @@ Leaflets/
      this. Set it to the exact `Name` value from `westminster_const` and
      every matched ward gets clipped to that polygon as a final step; safe
      to leave unset (the common case) when every ward is wholly in or out.
+   - `inactive_wards`: optional — wards to keep in the sheet but mark out of
+     scope (found 2026-10-26 building Staffordshire Moorlands: a whole-
+     district build where 2 of 27 wards sit in a different constituency).
+     `build_tracker.py` sets every road in them to Status `Inactive` and
+     leaves them out of the Dashboard's Streets/Residences totals. Needs
+     `ENABLE_INACTIVE: true` in the deployment's `index.html` (core.js then
+     adds a grey 5th status, counted as 0% served and left out of the
+     residences total) — the Apps Script already accepts `Inactive`. Leave
+     as `[]` normally.
    - `authorised_emails`: only needed if this constituency's tracker will be
      hosted as a Google Sheet with a bound Apps Script (see step 10) — the
      email addresses allowed to bypass its edit locks. Leave as `[]`
@@ -492,7 +501,7 @@ branches together rather than working strictly top-to-bottom:
 - **Leaflet Map family**: one GitHub repo per constituency (`leaflet-map`,
   `south-hams`, `burton-uttoxeter`, `stone`, `barnsley`, `sthelens`,
   `shipley`, `bassetlaw`, `east-grinstead-uckfield`,
-  `dunstable-leighton-buzzard`, `stockton-north-west`, plus
+  `dunstable-leighton-buzzard`, `stockton-north-west`, `staffordshire-moorlands`, plus
   `leaflet-map-demo`), all under `Daemeous`, each with GitHub Pages enabled
   serving from `main`/`/`. **Only `leaflet-map` carries the real
   `core.js`/`styles.css`** — every other repo's `index.html` loads them
@@ -707,6 +716,11 @@ times before concluding something's wrong.
   suffix (or no suffix, which falls back to `SHEET_GID`) can silently
   read/write each other's cached data. Check no other repo already uses
   the slug you're about to pick.
+- Optional: `ENABLE_INACTIVE: true` (see `inactive_wards` in step 3), and
+  `DEFAULT_WARDS: ["Ward Name", ...]` to open the map filtered to just
+  those wards (fitted to their extent) on first load — for a campaign's
+  current focus area; delete the line to revert to all wards. Both are
+  no-ops when absent.
 - `TITLE`/`SUBTITLE`/`INITIAL_VIEW`/`INITIAL_ZOOM` — as normal. Keep
   `TITLE` short — it's the sidebar `<h1>`, and on mobile it sits directly
   under the menu-toggle button's footprint (see the "Shared assets"
@@ -746,7 +760,7 @@ references — check it, don't assume `1`. **Whenever `core.js` or
 `styles.css` changes in `leaflet-map`, bump `?shared_v=N` in every
 consuming repo's `index.html`** (`south-hams`, `burton-uttoxeter`, `stone`,
 `barnsley`, `sthelens`, `shipley`, `bassetlaw`, `east-grinstead-uckfield`,
-`dunstable-leighton-buzzard`, `stockton-north-west`, `leaflet-map-demo`,
+`dunstable-leighton-buzzard`, `stockton-north-west`, `staffordshire-moorlands`, `leaflet-map-demo`,
 and any new one) and push each — `leaflet-map`'s own local `?v=N` on its
 same-origin tags is a separate counter and doesn't need to match.
 
@@ -760,7 +774,7 @@ central file that lists them; the list is intentionally duplicated
 everywhere for discoverability. As of this writing that's `leaflet-map`,
 `leaflet-map-demo`, `south-hams`, `burton-uttoxeter`, `stone`, `barnsley`,
 `sthelens`, `shipley`, `bassetlaw`, `east-grinstead-uckfield`,
-`dunstable-leighton-buzzard`, `stockton-north-west`, `stafford-potholes`,
+`dunstable-leighton-buzzard`, `stockton-north-west`, `staffordshire-moorlands`, `stafford-potholes`,
 plus `leaflet-pipeline`'s own README.
 **Always fetch the CURRENT live table from `leaflet-map`'s own README
 before copying it elsewhere** (`gh api repos/Daemeous/leaflet-map/contents/README.md

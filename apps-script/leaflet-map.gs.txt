@@ -98,7 +98,7 @@ function handleUpdate(body) {
 
 	 const row 	 	= parseInt(body.rowIndex, 10);
 	 const status = body.newStatus;
-	 const allowed = ["Complete", "In_Progress", "Planned", "Not_Started"];
+	 const allowed = ["Complete", "In_Progress", "Planned", "Not_Started", "Inactive"];
 	 if (!allowed.includes(status)) return jsonResp({ ok: false, error: "Invalid status: " + status });
 	 if (isNaN(row) || row < 2) 	 	 return jsonResp({ ok: false, error: "Invalid row index" });
 
@@ -368,7 +368,7 @@ function handlePropose(body) {
 
   let value;
   if (field === "status") {
-    const allowed = ["Complete", "In_Progress", "Planned", "Not_Started"];
+    const allowed = ["Complete", "In_Progress", "Planned", "Not_Started", "Inactive"];
     value = body.newStatus;
     if (!allowed.includes(value)) return jsonResp({ ok: false, error: "Invalid status: " + value });
   } else {
