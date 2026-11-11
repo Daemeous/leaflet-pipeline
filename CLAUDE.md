@@ -501,7 +501,7 @@ branches together rather than working strictly top-to-bottom:
 - **Leaflet Map family**: one GitHub repo per constituency (`leaflet-map`,
   `south-hams`, `burton-uttoxeter`, `stone`, `barnsley`, `sthelens`,
   `shipley`, `bassetlaw`, `east-grinstead-uckfield`,
-  `dunstable-leighton-buzzard`, `stockton-north-west`, `staffordshire-moorlands`, plus
+  `dunstable-leighton-buzzard`, `stockton-north-west`, `staffordshire-moorlands`, `lewes`, plus
   `leaflet-map-demo`), all under `Daemeous`, each with GitHub Pages enabled
   serving from `main`/`/`. **Only `leaflet-map` carries the real
   `core.js`/`styles.css`** — every other repo's `index.html` loads them
@@ -773,7 +773,7 @@ references — check it, don't assume `1`. **Whenever `core.js` or
 `styles.css` changes in `leaflet-map`, bump `?shared_v=N` in every
 consuming repo's `index.html`** (`south-hams`, `burton-uttoxeter`, `stone`,
 `barnsley`, `sthelens`, `shipley`, `bassetlaw`, `east-grinstead-uckfield`,
-`dunstable-leighton-buzzard`, `stockton-north-west`, `staffordshire-moorlands`, `leaflet-map-demo`,
+`dunstable-leighton-buzzard`, `stockton-north-west`, `staffordshire-moorlands`, `lewes`, `leaflet-map-demo`,
 and any new one) and push each — `leaflet-map`'s own local `?v=N` on its
 same-origin tags is a separate counter and doesn't need to match.
 
@@ -787,7 +787,7 @@ central file that lists them; the list is intentionally duplicated
 everywhere for discoverability. As of this writing that's `leaflet-map`,
 `leaflet-map-demo`, `south-hams`, `burton-uttoxeter`, `stone`, `barnsley`,
 `sthelens`, `shipley`, `bassetlaw`, `east-grinstead-uckfield`,
-`dunstable-leighton-buzzard`, `stockton-north-west`, `staffordshire-moorlands`, `stafford-potholes`,
+`dunstable-leighton-buzzard`, `stockton-north-west`, `staffordshire-moorlands`, `lewes`, `stafford-potholes`,
 plus `leaflet-pipeline`'s own README.
 **Always fetch the CURRENT live table from `leaflet-map`'s own README
 before copying it elsewhere** (`gh api repos/Daemeous/leaflet-map/contents/README.md
