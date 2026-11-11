@@ -25,6 +25,7 @@ The setup/build tooling behind the [leaflet-map](https://github.com/Daemeous/lea
 | Dunstable and Leighton Buzzard | https://daemeous.github.io/dunstable-leighton-buzzard/ |
 | Stockton North & West | https://daemeous.github.io/stockton-north-west/ |
 | Staffordshire Moorlands | https://daemeous.github.io/staffordshire-moorlands/ |
+| Lewes | https://daemeous.github.io/lewes/ |
 
 **Pothole Watch:**
 
